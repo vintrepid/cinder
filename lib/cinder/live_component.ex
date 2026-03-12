@@ -287,19 +287,24 @@ defmodule Cinder.LiveComponent do
   end
 
   @impl true
-  def handle_event("toggle_sort", %{"key" => key}, socket) do
+  def handle_event("toggle_sort", %{"key" => key} = params, socket) do
     current_sort = socket.assigns.sort_by
 
     # Find the column to get its sort cycle configuration
     column = Enum.find(socket.assigns.col, &(&1.field == key))
     sort_cycle = if column, do: column.sort_cycle, else: nil
 
+    # Shift+click uses additive mode (multi-column sort), normal click uses configured mode.
+    # Requires LiveSocket metadata: { click: (e, _el) => ({ shiftKey: e.shiftKey }) }
+    effective_mode =
+      if params["shiftKey"], do: :additive, else: socket.assigns.sort_mode
+
     new_sort =
       Cinder.QueryBuilder.toggle_sort_with_cycle(
         current_sort,
         key,
         sort_cycle,
-        socket.assigns.sort_mode
+        effective_mode
       )
 
     # Check if URL sync is enabled
@@ -858,7 +863,7 @@ defmodule Cinder.LiveComponent do
     |> assign_new(:selected_ids, fn -> MapSet.new() end)
     |> assign(:on_selection_change, assigns[:on_selection_change])
     |> assign(:id_field, assigns[:id_field] || :id)
-    |> assign(:sort_mode, assigns[:sort_mode] || :additive)
+    |> assign(:sort_mode, assigns[:sort_mode] || :exclusive)
     # Bulk actions
     |> assign_new(:bulk_action_slots, fn -> [] end)
   end

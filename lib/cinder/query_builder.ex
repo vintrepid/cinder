@@ -759,10 +759,14 @@ defmodule Cinder.QueryBuilder do
           remove_sort(current_sort, key, sort_mode)
         else
           # Update to next direction in cycle
-          Enum.map(current_sort, fn
-            {^key, _} -> {key, next_direction}
-            other -> other
-          end)
+          if sort_mode == :exclusive do
+            [{key, next_direction}]
+          else
+            Enum.map(current_sort, fn
+              {^key, _} -> {key, next_direction}
+              other -> other
+            end)
+          end
         end
 
       nil ->
@@ -779,7 +783,7 @@ defmodule Cinder.QueryBuilder do
   end
 
   defp add_sort(_current_sort, key, direction, :exclusive), do: [{key, direction}]
-  defp add_sort(current_sort, key, direction, :additive), do: [{key, direction} | current_sort]
+  defp add_sort(current_sort, key, direction, :additive), do: current_sort ++ [{key, direction}]
 
   defp remove_sort(_current_sort, _key, :exclusive), do: []
 

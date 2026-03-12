@@ -826,7 +826,7 @@ defmodule Cinder.Collection do
   defp normalize_sort_mode("additive"), do: :additive
   defp normalize_sort_mode(:exclusive), do: :exclusive
   defp normalize_sort_mode(:additive), do: :additive
-  defp normalize_sort_mode(_), do: :additive
+  defp normalize_sort_mode(_), do: :exclusive
 
   defp normalize_show_filters("toggle"), do: :toggle
   defp normalize_show_filters("toggle_open"), do: :toggle_open
