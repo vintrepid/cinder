@@ -1,9 +1,21 @@
 defmodule Cinder.Renderers.Table do
   @moduledoc """
-  Renderer for table layout.
+  Renderer for table layout using Phoenix Streams for efficient row updates.
 
-  This module contains the render function and helper components for
-  displaying data in a traditional HTML table format.
+  Rows are rendered inside a `phx-update="stream"` container, which means
+  Phoenix only sends diffs for changed rows to the client. When a single
+  item is updated via `Cinder.update_item/4`, only that row's DOM is patched —
+  the rest of the table is untouched.
+
+  ## DOM structure
+
+      <tbody id="{table-id}-stream" phx-update="stream">
+        <tr id="{table-id}-empty" class="only:table-row hidden">...</tr>
+        <tr id="{dom_id}" :for={{dom_id, item} <- @streams.data}>...</tr>
+      </tbody>
+
+  The empty state row uses the CSS `:only-child` pseudo-class to show itself
+  only when the stream container has no data rows.
   """
 
   use Phoenix.Component
@@ -80,8 +92,32 @@ defmodule Cinder.Renderers.Table do
               </th>
             </tr>
           </thead>
-          <tbody class={[@theme.tbody_class, (@loading && "opacity-75" || "")]} data-key="tbody_class">
-            <tr :for={item <- @data} :if={not @error}
+          <tbody id={"#{@id}-stream"} phx-update="stream" class={[@theme.tbody_class, (@loading && "opacity-75" || "")]} data-key="tbody_class">
+            <!-- Error State (non-stream item, persists in container) -->
+            <tr :if={@error and not @loading} id={"#{@id}-error"}>
+              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="error_class">
+                <%= if has_slot?(assigns, :error_slot) do %>
+                  {render_slot(@error_slot)}
+                <% else %>
+                  <div class={@theme.error_container_class} data-key="error_container_class">
+                    <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
+                  </div>
+                <% end %>
+              </td>
+            </tr>
+            <!-- Empty State (CSS :only-child shows when stream is empty) -->
+            <tr id={"#{@id}-empty"} class="only:table-row hidden">
+              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="empty_class">
+                <%= if has_slot?(assigns, :empty_slot) do %>
+                  {render_slot(@empty_slot, empty_context(assigns))}
+                <% else %>
+                  {@empty_message}
+                <% end %>
+              </td>
+            </tr>
+            <!-- Stream rows: only changed items are patched -->
+            <tr :for={{dom_id, item} <- @streams.data}
+                id={dom_id}
                 class={get_row_classes(@theme.row_class, @row_click, @selectable, @selected_ids, item, @id_field, @theme)}
                 data-item-id={to_string(Map.get(item, @id_field))}
                 data-key="row_class"
@@ -99,28 +135,6 @@ defmodule Cinder.Renderers.Table do
               </td>
               <td :for={column <- @columns} class={[@theme.td_class, column.class]} data-key="td_class">
                 {render_slot(column.slot, item)}
-              </td>
-            </tr>
-            <!-- Error State -->
-            <tr :if={@error and not @loading}>
-              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="error_class">
-                <%= if has_slot?(assigns, :error_slot) do %>
-                  {render_slot(@error_slot)}
-                <% else %>
-                  <div class={@theme.error_container_class} data-key="error_container_class">
-                    <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
-                  </div>
-                <% end %>
-              </td>
-            </tr>
-            <!-- Empty State (only when not loading and not error) -->
-            <tr :if={@data == [] and not @loading and not @error}>
-              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="empty_class">
-                <%= if has_slot?(assigns, :empty_slot) do %>
-                  {render_slot(@empty_slot, empty_context(assigns))}
-                <% else %>
-                  {@empty_message}
-                <% end %>
               </td>
             </tr>
           </tbody>

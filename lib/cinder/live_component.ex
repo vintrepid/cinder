@@ -19,7 +19,7 @@ defmodule Cinder.LiveComponent do
 
   @impl true
   def mount(socket) do
-    {:ok, socket}
+    {:ok, stream(socket, :data, [])}
   end
 
   @impl true
@@ -48,7 +48,12 @@ defmodule Cinder.LiveComponent do
         if Map.get(item, id_field) == id, do: update_fn.(item), else: item
       end)
 
-    {:ok, assign(socket, :data, updated_data)}
+    # Sync only the changed item to the stream (efficient single-item patch)
+    changed_item = Enum.find(updated_data, fn item -> Map.get(item, id_field) == id end)
+
+    socket = assign(socket, :data, updated_data)
+    socket = if changed_item, do: stream_insert(socket, :data, changed_item), else: socket
+    {:ok, socket}
   end
 
   def update(%{__update_items__: {ids, update_fn}}, socket) do
@@ -60,7 +65,12 @@ defmodule Cinder.LiveComponent do
         if Map.get(item, id_field) in id_set, do: update_fn.(item), else: item
       end)
 
-    {:ok, assign(socket, :data, updated_data)}
+    # Sync only changed items to the stream
+    changed_items = Enum.filter(updated_data, fn item -> Map.get(item, id_field) in id_set end)
+
+    socket = assign(socket, :data, updated_data)
+    socket = Enum.reduce(changed_items, socket, fn item, acc -> stream_insert(acc, :data, item) end)
+    {:ok, socket}
   end
 
   # Single item update - raw item passed (has id field)
@@ -121,7 +131,8 @@ defmodule Cinder.LiveComponent do
         input = raw_item || old_item
         updated = update_fn.(input)
         updated_data = Enum.map(data, &if(Map.get(&1, id_field) == id, do: updated, else: &1))
-        {:ok, assign(socket, :data, updated_data)}
+        socket = assign(socket, :data, updated_data)
+        {:ok, stream_insert(socket, :data, updated)}
     end
   end
 
@@ -148,7 +159,10 @@ defmodule Cinder.LiveComponent do
           Map.get(updated_by_id, id, item)
         end)
 
-      {:ok, assign(socket, :data, updated_data)}
+      # Sync only changed items to the stream
+      socket = assign(socket, :data, updated_data)
+      socket = Enum.reduce(Map.values(updated_by_id), socket, fn item, acc -> stream_insert(acc, :data, item) end)
+      {:ok, socket}
     end
   end
 
@@ -591,6 +605,7 @@ defmodule Cinder.LiveComponent do
       |> assign(:loading, false)
       |> assign(:error, false)
       |> assign(:data, page.results)
+      |> stream(:data, page.results, reset: true)
       |> assign(:page, page)
       # Update keyset cursors for navigation (only relevant in keyset mode)
       |> maybe_update_keyset_cursors(page)
@@ -616,6 +631,7 @@ defmodule Cinder.LiveComponent do
       |> assign(:loading, false)
       |> assign(:error, true)
       |> assign(:data, [])
+      |> stream(:data, [], reset: true)
       |> assign(:page, nil)
 
     {:noreply, socket}
@@ -639,6 +655,7 @@ defmodule Cinder.LiveComponent do
       |> assign(:loading, false)
       |> assign(:error, true)
       |> assign(:data, [])
+      |> stream(:data, [], reset: true)
       |> assign(:page, nil)
 
     {:noreply, socket}
@@ -844,6 +861,7 @@ defmodule Cinder.LiveComponent do
     |> assign(:loading, false)
     |> assign(:error, assigns[:error] || false)
     |> assign(:data, assigns[:data] || [])
+    |> stream(:data, assigns[:data] || [], reset: true)
     |> assign(:sort_by, assigns[:sort_by] || extract_initial_sorts(assigns))
     |> assign(:filters, assigns[:filters] || %{})
     |> assign(:search_term, assigns[:search_term] || "")

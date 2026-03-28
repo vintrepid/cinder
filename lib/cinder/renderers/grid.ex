@@ -80,11 +80,30 @@ defmodule Cinder.Renderers.Grid do
         myself={@myself}
       />
 
-      <!-- Grid Items Container -->
-      <div class={@grid_container_class} data-key="grid_container_class">
+      <!-- Grid Items Container (stream-backed) -->
+      <div id={"#{@id}-stream"} phx-update="stream" class={@grid_container_class} data-key="grid_container_class">
+        <!-- Empty State (CSS :only-child shows when stream is empty) -->
+        <div id={"#{@id}-empty"} class={["only:block hidden", @theme.empty_class, "col-span-full"]} data-key="empty_class">
+          <%= if has_slot?(assigns, :empty_slot) do %>
+            {render_slot(@empty_slot, empty_context(assigns))}
+          <% else %>
+            {@empty_message}
+          <% end %>
+        </div>
+        <!-- Error State -->
+        <div :if={@error and not @loading} id={"#{@id}-error"} class={[@theme.empty_class, "col-span-full"]} data-key="error_class">
+          <%= if has_slot?(assigns, :error_slot) do %>
+            {render_slot(@error_slot)}
+          <% else %>
+            <div class={@theme.error_container_class} data-key="error_container_class">
+              <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
+            </div>
+          <% end %>
+        </div>
         <%= if @has_item_slot do %>
           <div
-            :for={item <- @data} :if={not @error}
+            :for={{dom_id, item} <- @streams.data}
+            id={dom_id}
             class={get_item_classes_with_selection(@grid_item_class, Map.get(assigns, :selectable, false), Map.get(assigns, :selected_ids, MapSet.new()), item, Map.get(assigns, :id_field, :id), @item_click, @theme)}
             data-key={@grid_item_data_key}
             phx-click={item_click_action(@item_click, Map.get(assigns, :selectable, false), item, Map.get(assigns, :id_field, :id), @myself)}
@@ -108,30 +127,10 @@ defmodule Cinder.Renderers.Grid do
           </div>
         <% else %>
           <!-- No item slot provided - render message -->
-          <div :if={not @loading} class={@theme.empty_class} data-key="empty_class">
+          <div :if={not @loading} id={"#{@id}-no-template"} class={@theme.empty_class} data-key="empty_class">
             No item template provided. Add an &lt;:item&gt; slot to render items.
           </div>
         <% end %>
-
-        <!-- Error State -->
-        <div :if={@error and not @loading} class={[@theme.empty_class, "col-span-full"]} data-key="error_class">
-          <%= if has_slot?(assigns, :error_slot) do %>
-            {render_slot(@error_slot)}
-          <% else %>
-            <div class={@theme.error_container_class} data-key="error_container_class">
-              <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
-            </div>
-          <% end %>
-        </div>
-
-        <!-- Empty State (only when not loading and not error) -->
-        <div :if={@data == [] and not @loading and not @error and @has_item_slot} class={[@theme.empty_class, "col-span-full"]} data-key="empty_class">
-          <%= if has_slot?(assigns, :empty_slot) do %>
-            {render_slot(@empty_slot, empty_context(assigns))}
-          <% else %>
-            {@empty_message}
-          <% end %>
-        </div>
       </div>
 
       <!-- Loading indicator -->
