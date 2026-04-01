@@ -78,7 +78,7 @@ defmodule Cinder.Filter do
         @impl true
         def build_query(query, field, filter_value) do
           %{value: value} = filter_value
-          field_atom = String.to_atom(field)
+          field_atom = String.to_existing_atom(field)
           Ash.Query.filter(query, ^ref(field_atom) <= ^value)
         end
       end
@@ -176,7 +176,7 @@ defmodule Cinder.Filter do
 
       def build_query(query, field, filter_value) do
         %{value: value} = filter_value
-        field_atom = String.to_atom(field)
+        field_atom = String.to_existing_atom(field)
         Ash.Query.filter(query, ^ref(field_atom) == ^value)
       end
 
@@ -193,7 +193,7 @@ defmodule Cinder.Filter do
 
           Ash.Query.filter(query, exists(^rel_path, ^ref(field_atom) == ^value))
         else
-          field_atom = String.to_atom(field)
+          field_atom = String.to_existing_atom(field)
           Ash.Query.filter(query, ^ref(field_atom) == ^value)
         end
       end

@@ -997,13 +997,13 @@ defmodule Cinder.Collection do
         {filter_type, []}
 
       filter_type when is_binary(filter_type) ->
-        normalized_type = String.to_atom(filter_type)
+        normalized_type = String.to_existing_atom(filter_type)
         validate_filter_type!(normalized_type, field)
         {normalized_type, []}
 
       filter_config when is_list(filter_config) ->
         type = Keyword.get(filter_config, :type, :auto)
-        normalized_type = if is_binary(type), do: String.to_atom(type), else: type
+        normalized_type = if is_binary(type), do: String.to_existing_atom(type), else: type
         validate_filter_type!(normalized_type, field)
         options = Keyword.delete(filter_config, :type)
         {normalized_type, options}
@@ -1053,10 +1053,10 @@ defmodule Cinder.Collection do
   defp get_field_value(item, field) when is_binary(field) do
     case String.split(field, ".", parts: 2) do
       [single_field] ->
-        get_in(item, [Access.key(String.to_atom(single_field))])
+        get_in(item, [Access.key(String.to_existing_atom(single_field))])
 
       [relationship, nested_field] ->
-        case get_in(item, [Access.key(String.to_atom(relationship))]) do
+        case get_in(item, [Access.key(String.to_existing_atom(relationship))]) do
           nil -> nil
           related_item -> get_field_value(related_item, nested_field)
         end

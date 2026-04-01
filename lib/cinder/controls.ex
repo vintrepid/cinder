@@ -92,7 +92,7 @@ defmodule Cinder.Controls do
     filters =
       Enum.map(filterable_columns, fn column ->
         current_value = Map.get(filter_values, column.field, "")
-        key = String.to_atom(column.field)
+        key = String.to_existing_atom(column.field)
 
         {key,
          %{

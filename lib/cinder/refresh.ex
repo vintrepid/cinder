@@ -12,8 +12,8 @@ defmodule Cinder.Refresh do
 
       def handle_event("delete", %{"id" => id}, socket) do
         MyApp.MyResource
-        |> Ash.get!(id)
-        |> Ash.destroy!()
+        |> Ash.get(id)
+        |> Ash.destroy()
 
         {:noreply, refresh_table(socket, "my-table-id")}
       end
@@ -62,8 +62,8 @@ defmodule Cinder.Refresh do
       # In a handle_event callback
       def handle_event("delete_user", %{"id" => id}, socket) do
         MyApp.User
-        |> Ash.get!(id)
-        |> Ash.destroy!()
+        |> Ash.get(id)
+        |> Ash.destroy()
 
         {:noreply, refresh_table(socket, "users-table")}
       end

@@ -100,7 +100,7 @@ if Code.ensure_loaded?(Igniter) do
       options = igniter.args.options
 
       module_name = Igniter.Project.Module.parse(arguments.module)
-      filter_type = String.to_atom(arguments.type)
+      filter_type = String.to_existing_atom(arguments.type)
       template = options[:template] || "basic"
 
       # Validate template - use "text" as default instead of "basic"

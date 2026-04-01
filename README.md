@@ -89,6 +89,30 @@ For list or grid layouts:
 - **[Upgrading Guide](docs/upgrading.md)** - Migration instructions from older versions
 - **[HexDocs](https://hexdocs.pm/cinder)** - Full API reference
 
+## Roadmap
+
+### Infinite Scroll (Default)
+
+Replace traditional pagination with infinite scroll as the default collection behavior.
+Rows load progressively as the user scrolls, eliminating page boundaries entirely.
+
+### Streaming with Ash.stream!
+
+Cinder currently loads data with paginated `Ash.read()` — one page at a time synchronously.
+The next evolution combines `Ash.stream!/2` (lazy, cursor-based batches from the database)
+with `Phoenix.LiveView.stream/4` (efficient incremental DOM updates):
+
+- **Data layer**: `Ash.stream!` reads in batches of 250 using keyset pagination, returning
+  an Elixir `Stream` that never holds the full result set in memory.
+- **UI layer**: Each batch is fed to `Phoenix.LiveView.stream_insert/4`, so rows appear
+  progressively as they arrive. The page loads instantly; data fills in.
+- **Benefits**: Constant memory usage regardless of result size. No blocking page loads.
+  Natural fit for real-time feeds, large exports, and infinite scroll.
+
+This is NOT what live_table did — live_table called `Repo.all()` to load everything,
+then split the list at the page boundary. The streaming was DOM-only, not data-level.
+True `Ash.stream!` + `LiveView.stream` gives both.
+
 ## Requirements
 
 - Phoenix LiveView 1.0+
