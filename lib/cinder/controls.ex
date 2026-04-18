@@ -327,7 +327,9 @@ defmodule Cinder.Controls do
           class={[@theme.filter_clear_all_class, if(@active_filter_count == 0 and not @show_all?, do: "invisible", else: "")]}
           data-key="filter_clear_all_class"
         >
-          {dgettext("cinder", "Clear all")}
+          {if @show_all? and @has_default_filters,
+            do: dgettext("cinder", "Defaults"),
+            else: dgettext("cinder", "Clear all")}
         </button>
         <button
           :if={@has_default_filters}
