@@ -129,7 +129,9 @@ defmodule Cinder.Controls do
       filters_label: assigns.filters_label,
       filter_mode: filter_mode,
       filter_values: filter_values,
-      raw_filter_params: raw_filter_params
+      raw_filter_params: raw_filter_params,
+      has_default_filters: map_size(Map.get(assigns, :default_filters, %{}) || %{}) > 0,
+      show_all?: Map.get(assigns, :show_all?, false)
     }
   end
 
@@ -277,6 +279,8 @@ defmodule Cinder.Controls do
   attr :target, :any, default: nil
   attr :theme, :map, required: true
   attr :has_filters, :boolean, default: true
+  attr :has_default_filters, :boolean, default: false
+  attr :show_all?, :boolean, default: false
 
   def render_header(assigns) do
     collapsible = assigns.filter_mode in [:toggle, :toggle_open]
@@ -314,16 +318,28 @@ defmodule Cinder.Controls do
           </span>
         </span>
       <% end %>
-      <button
-        :if={@has_filters}
-        type="button"
-        phx-click="clear_all_filters"
-        phx-target={@target}
-        class={[@theme.filter_clear_all_class, if(@active_filter_count == 0, do: "invisible", else: "")]}
-        data-key="filter_clear_all_class"
-      >
-        {dgettext("cinder", "Clear all")}
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          :if={@has_filters}
+          type="button"
+          phx-click="clear_all_filters"
+          phx-target={@target}
+          class={[@theme.filter_clear_all_class, if(@active_filter_count == 0 and not @show_all?, do: "invisible", else: "")]}
+          data-key="filter_clear_all_class"
+        >
+          {dgettext("cinder", "Clear all")}
+        </button>
+        <button
+          :if={@has_default_filters}
+          type="button"
+          phx-click="show_all_filters"
+          phx-target={@target}
+          class={[@theme.filter_clear_all_class, if(@show_all?, do: "invisible", else: "")]}
+          data-key="filter_clear_all_class"
+        >
+          {dgettext("cinder", "Show all")}
+        </button>
+      </div>
     </div>
     """
   end

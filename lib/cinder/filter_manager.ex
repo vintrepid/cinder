@@ -103,7 +103,8 @@ defmodule Cinder.FilterManager do
         target={@target}
         theme={@theme}
         has_filters={@controls_data.filters != []}
-
+        has_default_filters={@controls_data.has_default_filters}
+        show_all?={@controls_data.show_all?}
       />
 
       <div id={"#{@table_id}-filter-body"} class={if(@collapsible and @initially_collapsed, do: "hidden")}>

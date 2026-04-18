@@ -351,11 +351,38 @@ defmodule Cinder.LiveComponent do
 
   @impl true
   def handle_event("clear_all_filters", _params, socket) do
-    new_filters = Cinder.FilterManager.clear_all_filters(socket.assigns.filters)
+    # "Clear all" returns to configured default_filters when present, so the user
+    # gets the curated default view back rather than an empty list.
+    new_filters =
+      case decode_default_filters(socket) do
+        empty when empty == %{} -> Cinder.FilterManager.clear_all_filters(socket.assigns.filters)
+        defaults -> defaults
+      end
 
     socket =
       socket
       |> assign(:filters, new_filters)
+      |> assign(:show_all?, false)
+      |> assign(:raw_filter_params, %{})
+      |> assign(:search_term, "")
+      |> assign(:current_page, 1)
+      |> assign(:after_keyset, nil)
+      |> assign(:before_keyset, nil)
+      |> load_data()
+      |> notify_state_change()
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("show_all_filters", _params, socket) do
+    # "Show all" explicitly opts out of default_filters until the user resets.
+    socket =
+      socket
+      |> assign(:filters, %{})
+      |> assign(:show_all?, true)
+      |> assign(:raw_filter_params, %{})
+      |> assign(:search_term, "")
       |> assign(:current_page, 1)
       |> assign(:after_keyset, nil)
       |> assign(:before_keyset, nil)
@@ -706,7 +733,8 @@ defmodule Cinder.LiveComponent do
       page_size: page_size_config.selected_page_size,
       default_page_size: page_size_config.default_page_size,
       search_term: search_term,
-      filter_field_names: filter_field_names
+      filter_field_names: filter_field_names,
+      show_all?: Map.get(socket.assigns, :show_all?, false)
     }
 
     # For keyset pagination, include after/before cursors for URL persistence
@@ -729,9 +757,16 @@ defmodule Cinder.LiveComponent do
   defp decode_url_state(socket, assigns) do
     if Map.has_key?(assigns, :url_raw_params) do
       raw_params = assigns.url_raw_params
+      show_all? = Map.get(raw_params, "_show_all") in ["1", "true", true]
 
       decoded_filters =
-        Cinder.UrlManager.decode_filters(raw_params, socket.assigns.query_columns)
+        case Cinder.UrlManager.decode_filters(raw_params, socket.assigns.query_columns) do
+          empty when empty == %{} and not show_all? ->
+            decode_default_filters(socket)
+
+          decoded ->
+            decoded
+        end
 
       decoded_sorts =
         Cinder.UrlManager.decode_sort(Map.get(raw_params, "sort"), socket.assigns.columns)
@@ -787,8 +822,20 @@ defmodule Cinder.LiveComponent do
       |> assign(:current_page, decoded_state.current_page)
       |> assign(:sort_by, final_sort_by)
       |> assign(:search_term, decoded_state.search_term)
+      |> assign(:show_all?, show_all?)
     else
       decode_url_state_legacy(socket, assigns)
+    end
+  end
+
+  defp decode_default_filters(socket) do
+    defaults = Map.get(socket.assigns, :default_filters, %{}) || %{}
+    query_columns = Map.get(socket.assigns, :query_columns, [])
+
+    if defaults == %{} or query_columns == [] do
+      %{}
+    else
+      Cinder.UrlManager.decode_filters(defaults, query_columns)
     end
   end
 
@@ -884,6 +931,11 @@ defmodule Cinder.LiveComponent do
     |> assign(:sort_mode, assigns[:sort_mode] || :exclusive)
     # Bulk actions
     |> assign_new(:bulk_action_slots, fn -> [] end)
+    # Defaults / show-all state
+    |> assign_new(:default_filters, fn -> %{} end)
+    |> assign_new(:show_all?, fn -> false end)
+    |> assign_new(:persist_key, fn -> nil end)
+    |> assign_new(:persist_scope, fn -> nil end)
   end
 
   defp assign_column_definitions(socket) do

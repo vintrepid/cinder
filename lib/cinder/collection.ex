@@ -158,6 +158,28 @@ defmodule Cinder.Collection do
   attr(:on_state_change, :any, default: nil, doc: "Custom state change handler")
   attr(:show_pagination, :boolean, default: true, doc: "Whether to show pagination controls")
 
+  attr(:default_filters, :map,
+    default: %{},
+    doc:
+      "Filters applied when the URL has no filter params and no persisted state opts the user out. " <>
+        "Shape: %{\"field\" => raw_value} (same shape as URL params). \"Clear all\" returns to these defaults; " <>
+        "a \"Show all\" affordance discards them."
+  )
+
+  attr(:persist_key, :string,
+    default: nil,
+    doc:
+      "Stable identifier used by the configured `Cinder.Persistence` adapter to load/save list state. " <>
+        "Persistence is skipped when this is nil or no adapter is configured."
+  )
+
+  attr(:persist_scope, :any,
+    default: nil,
+    doc:
+      "Opaque value passed to the persistence adapter — typically the current user. " <>
+        "Persistence is skipped when nil."
+  )
+
   attr(:pagination, :any,
     default: :offset,
     doc:
@@ -371,6 +393,9 @@ defmodule Cinder.Collection do
       |> assign_new(:pagination, fn -> :offset end)
       |> assign_new(:selectable, fn -> false end)
       |> assign_new(:on_selection_change, fn -> nil end)
+      |> assign_new(:default_filters, fn -> %{} end)
+      |> assign_new(:persist_key, fn -> nil end)
+      |> assign_new(:persist_scope, fn -> nil end)
       |> assign(:sort_mode, normalize_sort_mode(assigns[:sort_mode]))
 
     # Validate and normalize query/resource parameters
@@ -384,11 +409,20 @@ defmodule Cinder.Collection do
     processed_filter_slots = process_filter_slots(Map.get(assigns, :filter, []), resource)
 
     # Build query columns (columns used for filtering and searching)
-    query_columns = build_query_columns(processed_columns, processed_filter_slots)
+    base_query_columns = build_query_columns(processed_columns, processed_filter_slots)
+
+    # When `search={true}` (or `search={[fields: :auto]}`), synthesize hidden
+    # searchable columns covering every public string-like attribute on the
+    # resource — so a single search box matches across the whole resource
+    # without requiring per-column `search` flags.
+    auto_search_columns =
+      build_auto_search_columns(assigns.search, base_query_columns, resource)
+
+    query_columns = base_query_columns ++ auto_search_columns
 
     # Process unified search configuration
     {search_label, search_placeholder, search_enabled, search_fn} =
-      process_search_config(assigns.search, processed_columns)
+      process_search_config(assigns.search, processed_columns ++ auto_search_columns)
 
     # Determine if filters should be shown
     show_filters = determine_show_filters(assigns, query_columns, search_enabled)
@@ -498,6 +532,9 @@ defmodule Cinder.Collection do
         on_selection_change={@on_selection_change}
         bulk_action_slots={@bulk_action_slots}
         sort_mode={@sort_mode}
+        default_filters={@default_filters}
+        persist_key={@persist_key}
+        persist_scope={@persist_scope}
       />
     </div>
     """
@@ -788,6 +825,12 @@ defmodule Cinder.Collection do
       false ->
         {nil, nil, false, nil}
 
+      true ->
+        {dgettext("cinder", "Search"), dgettext("cinder", "Search..."), true, nil}
+
+      :auto ->
+        {dgettext("cinder", "Search"), dgettext("cinder", "Search..."), true, nil}
+
       config when is_list(config) ->
         label = Keyword.get(config, :label, dgettext("cinder", "Search"))
         placeholder = Keyword.get(config, :placeholder, dgettext("cinder", "Search..."))
@@ -801,6 +844,97 @@ defmodule Cinder.Collection do
           {nil, nil, false, nil}
         end
     end
+  end
+
+  @doc """
+  Builds synthetic, hidden searchable columns for auto-search.
+
+  Returns `[]` unless the user opted into auto-search via `search={true}`,
+  `search={:auto}`, or `search={[fields: :auto | [...]]}`. Auto-discovered
+  fields are filtered to public string-like attributes (`:string`, `:ci_string`,
+  `:atom`) and any attributes already covered by an existing `searchable` column
+  are skipped to avoid duplicate OR clauses.
+  """
+  def build_auto_search_columns(search_config, existing_query_columns, resource) do
+    case auto_search_field_spec(search_config) do
+      :none ->
+        []
+
+      :auto ->
+        resource
+        |> auto_text_field_names()
+        |> Enum.reject(&already_searchable?(&1, existing_query_columns))
+        |> Enum.map(&synthetic_search_column/1)
+
+      {:fields, fields} when is_list(fields) ->
+        fields
+        |> Enum.map(&to_string/1)
+        |> Enum.reject(&already_searchable?(&1, existing_query_columns))
+        |> Enum.map(&synthetic_search_column/1)
+    end
+  end
+
+  defp auto_search_field_spec(true), do: :auto
+  defp auto_search_field_spec(:auto), do: :auto
+
+  defp auto_search_field_spec(config) when is_list(config) do
+    case Keyword.get(config, :fields) do
+      nil -> :none
+      :auto -> :auto
+      fields when is_list(fields) -> {:fields, fields}
+      _ -> :none
+    end
+  end
+
+  defp auto_search_field_spec(_), do: :none
+
+  defp already_searchable?(field, columns) do
+    Enum.any?(columns, fn col -> col.field == field and Map.get(col, :searchable, false) end)
+  end
+
+  defp auto_text_field_names(nil), do: []
+
+  defp auto_text_field_names(resource) do
+    if Code.ensure_loaded?(Ash.Resource.Info) and Ash.Resource.Info.resource?(resource) do
+      resource
+      |> Ash.Resource.Info.public_attributes()
+      |> Enum.filter(&text_like_attribute?/1)
+      |> Enum.map(&Atom.to_string(&1.name))
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp text_like_attribute?(%{type: type}) do
+    case type do
+      Ash.Type.String -> true
+      Ash.Type.CiString -> true
+      :string -> true
+      :ci_string -> true
+      _ -> false
+    end
+  end
+
+  defp text_like_attribute?(_), do: false
+
+  defp synthetic_search_column(field) when is_binary(field) do
+    %{
+      field: field,
+      label: field,
+      filterable: false,
+      filter_type: :text,
+      filter_options: [],
+      sortable: false,
+      class: "",
+      inner_block: nil,
+      slot: nil,
+      filter_fn: nil,
+      searchable: true,
+      sort_cycle: [nil, :asc, :desc],
+      __slot__: :synthetic_search
+    }
   end
 
   # ============================================================================

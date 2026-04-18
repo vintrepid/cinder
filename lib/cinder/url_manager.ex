@@ -92,13 +92,21 @@ defmodule Cinder.UrlManager do
         Map.put(state_with_sort, :search, search_term)
       end
 
+    # Encode the show_all flag so the URL signals "user opted out of default_filters."
+    state_with_show_all =
+      if Map.get(state, :show_all?, false) do
+        Map.put(state_with_search, :_show_all, "1")
+      else
+        state_with_search
+      end
+
     # Add filter field names for UrlSync to know which params are table-managed
     filter_field_names = Map.get(state, :filter_field_names, [])
 
     if Enum.empty?(filter_field_names) do
-      state_with_search
+      state_with_show_all
     else
-      Map.put(state_with_search, :_filter_fields, Enum.join(filter_field_names, ","))
+      Map.put(state_with_show_all, :_filter_fields, Enum.join(filter_field_names, ","))
     end
   end
 

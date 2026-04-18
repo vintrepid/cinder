@@ -85,9 +85,13 @@ defmodule Cinder.UrlSync do
 
       This function is automatically injected by `use Cinder.UrlSync`.
       It handles `:table_state_change` messages from collection components.
+      Also persists the new state via the configured `Cinder.Persistence`
+      adapter when a `persist_key`/`persist_scope` were registered with
+      `Cinder.UrlSync.handle_params/4`.
       """
-      def handle_info({:table_state_change, _table_id, encoded_state}, socket) do
+      def handle_info({:table_state_change, table_id, encoded_state}, socket) do
         current_uri = get_in(socket.assigns, [:url_state, :uri])
+        Cinder.UrlSync.persist_state(socket, table_id, encoded_state)
         {:noreply, Cinder.UrlSync.update_url(socket, encoded_state, current_uri)}
       end
     end
@@ -148,7 +152,7 @@ defmodule Cinder.UrlSync do
 
       # The collection manages these specific parameter keys
       # Including after/before for keyset pagination
-      known_collection_keys = ["page", "sort", "page_size", "search", "after", "before"]
+      known_collection_keys = ["page", "sort", "page_size", "search", "after", "before", "_show_all"]
 
       # Extract filter field names from encoded state (if provided)
       # This tells us exactly which parameters are collection-managed filter fields
@@ -323,11 +327,38 @@ defmodule Cinder.UrlSync do
 
   The `@url_state` assign will be available for use with the collection component.
   """
-  def handle_params(params, uri \\ nil, socket) do
+  def handle_params(params, uri \\ nil, socket, opts \\ [])
+
+  def handle_params(params, uri, socket, opts) when is_list(opts) do
+    persist_key = Keyword.get(opts, :persist_key)
+    persist_scope = Keyword.get(opts, :persist_scope)
+    default_filters = Keyword.get(opts, :default_filters, %{}) || %{}
+
+    cond do
+      url_has_state?(params) ->
+        socket
+        |> assign_url_state(params, uri)
+        |> register_persistence(persist_key, persist_scope)
+
+      bootstrap_state =
+          (persist_key && persist_scope &&
+             Cinder.Persistence.load(persist_key, persist_scope)) ||
+            (map_size(default_filters) > 0 && default_filters) ->
+        socket
+        |> register_persistence(persist_key, persist_scope)
+        |> Phoenix.LiveView.push_patch(to: build_url(bootstrap_state, uri, socket))
+
+      true ->
+        socket
+        |> assign_url_state(params, uri)
+        |> register_persistence(persist_key, persist_scope)
+    end
+  end
+
+  defp assign_url_state(socket, params, uri) do
     collection_state = extract_collection_state(params)
 
     url_state = %{
-      # Raw params for proper filter decoding
       filters: params,
       current_page: collection_state.current_page,
       sort_by: collection_state.sort_by,
@@ -335,6 +366,45 @@ defmodule Cinder.UrlSync do
     }
 
     assign(socket, :url_state, url_state)
+  end
+
+  defp register_persistence(socket, nil, _scope), do: socket
+  defp register_persistence(socket, _key, nil), do: socket
+
+  defp register_persistence(socket, key, scope) do
+    assign(socket, :__cinder_persist__, %{key: key, scope: scope})
+  end
+
+  # Treats the URL as authoritative when it contains any non-private params or
+  # any of the reserved cinder keys (search, sort, page, etc., plus `_show_all`).
+  # `_filter_fields` is metadata Cinder injects on its own — never treated as user state.
+  defp url_has_state?(params) when is_map(params) do
+    params
+    |> Map.keys()
+    |> Enum.any?(fn key ->
+      key = to_string(key)
+
+      cond do
+        key == "_filter_fields" -> false
+        key == "_show_all" -> true
+        String.starts_with?(key, "_") -> false
+        true -> true
+      end
+    end)
+  end
+
+  defp url_has_state?(_), do: false
+
+  @doc """
+  Persists the current encoded collection state via the configured adapter.
+
+  Called by the `handle_info/2` callback injected by `use Cinder.UrlSync`.
+  """
+  def persist_state(socket, _table_id, encoded_state) do
+    case Map.get(socket.assigns, :__cinder_persist__) do
+      %{key: key, scope: scope} -> Cinder.Persistence.save(key, scope, encoded_state)
+      _ -> :ok
+    end
   end
 
   @doc """
