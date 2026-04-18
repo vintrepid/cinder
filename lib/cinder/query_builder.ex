@@ -562,8 +562,8 @@ defmodule Cinder.QueryBuilder do
   # Enum-typed columns: match search_term against each allowed atom's name
   # (case-insensitive substring) and emit one `equals` condition per match.
   # The outer combiner ORs all conditions together.
-  defp build_column_search_conditions(query, %{search_match: :enum, search_enum_values: values} = column, search_term)
-       when is_list(values) and values != [] do
+  defp build_column_search_conditions(query, %{search_match: match, search_enum_values: values} = column, search_term)
+       when match in [:enum, :enum_array] and is_list(values) and values != [] do
     lowered = String.downcase(search_term)
 
     values
@@ -573,6 +573,7 @@ defmodule Cinder.QueryBuilder do
     |> Enum.flat_map(fn value ->
       field_name = Cinder.Filter.Helpers.field_notation_from_url_safe(column.field)
 
+      # :equals is type-aware — array fields use containment, scalars use ==.
       test_query =
         Cinder.Filter.Helpers.build_ash_filter(query, field_name, value, :equals)
 

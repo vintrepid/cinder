@@ -943,6 +943,12 @@ defmodule Cinder.Collection do
           values -> %{match: :enum, values: values}
         end
 
+      match?({:array, t} when t in [Ash.Type.Atom, :atom], type) ->
+        case enum_items_one_of(attr) do
+          [] -> nil
+          values -> %{match: :enum_array, values: values}
+        end
+
       true ->
         nil
     end
@@ -958,6 +964,17 @@ defmodule Cinder.Collection do
   end
 
   defp enum_one_of(_), do: []
+
+  defp enum_items_one_of(%{constraints: constraints}) when is_list(constraints) do
+    with items when is_list(items) <- Keyword.get(constraints, :items),
+         values when is_list(values) <- Keyword.get(items, :one_of) do
+      values
+    else
+      _ -> []
+    end
+  end
+
+  defp enum_items_one_of(_), do: []
 
   defp synthetic_search_column(field, spec) when is_binary(field) and is_map(spec) do
     %{
