@@ -555,28 +555,52 @@ defmodule Cinder.QueryBuilder do
   # Builds individual filter conditions for searchable columns
   defp build_search_conditions(query, searchable_columns, search_term) do
     Enum.reduce(searchable_columns, [], fn column, acc ->
-      # Convert URL-safe field notation to bracket notation if needed
+      build_column_search_conditions(query, column, search_term) ++ acc
+    end)
+  end
+
+  # Enum-typed columns: match search_term against each allowed atom's name
+  # (case-insensitive substring) and emit one `equals` condition per match.
+  # The outer combiner ORs all conditions together.
+  defp build_column_search_conditions(query, %{search_match: :enum, search_enum_values: values} = column, search_term)
+       when is_list(values) and values != [] do
+    lowered = String.downcase(search_term)
+
+    values
+    |> Enum.filter(fn value ->
+      value |> to_string() |> String.downcase() |> String.contains?(lowered)
+    end)
+    |> Enum.flat_map(fn value ->
       field_name = Cinder.Filter.Helpers.field_notation_from_url_safe(column.field)
 
-      # Test if this field can be filtered by building a test query
-      # Use case-insensitive search by wrapping with Ash.CiString
-      case_insensitive_term = Ash.CiString.new(search_term)
-
       test_query =
-        Cinder.Filter.Helpers.build_ash_filter(
-          query,
-          field_name,
-          case_insensitive_term,
-          :contains
-        )
+        Cinder.Filter.Helpers.build_ash_filter(query, field_name, value, :equals)
 
-      # Only include fields that don't produce errors
       if Enum.empty?(test_query.errors) and not is_nil(test_query.filter) do
-        [test_query.filter | acc]
+        [test_query.filter]
       else
-        acc
+        []
       end
     end)
+  end
+
+  defp build_column_search_conditions(query, column, search_term) do
+    field_name = Cinder.Filter.Helpers.field_notation_from_url_safe(column.field)
+    case_insensitive_term = Ash.CiString.new(search_term)
+
+    test_query =
+      Cinder.Filter.Helpers.build_ash_filter(
+        query,
+        field_name,
+        case_insensitive_term,
+        :contains
+      )
+
+    if Enum.empty?(test_query.errors) and not is_nil(test_query.filter) do
+      [test_query.filter]
+    else
+      []
+    end
   end
 
   # Combines multiple filter conditions with OR logic

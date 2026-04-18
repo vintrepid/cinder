@@ -862,15 +862,18 @@ defmodule Cinder.Collection do
 
       :auto ->
         resource
-        |> auto_text_field_names()
-        |> Enum.reject(&already_searchable?(&1, existing_query_columns))
-        |> Enum.map(&synthetic_search_column/1)
+        |> auto_searchable_attrs()
+        |> Enum.reject(fn {field, _spec} -> already_searchable?(field, existing_query_columns) end)
+        |> Enum.map(fn {field, spec} -> synthetic_search_column(field, spec) end)
 
       {:fields, fields} when is_list(fields) ->
         fields
         |> Enum.map(&to_string/1)
         |> Enum.reject(&already_searchable?(&1, existing_query_columns))
-        |> Enum.map(&synthetic_search_column/1)
+        |> Enum.map(fn field ->
+          spec = attr_search_spec(resource, field) || %{match: :contains}
+          synthetic_search_column(field, spec)
+        end)
     end
   end
 
@@ -892,14 +895,18 @@ defmodule Cinder.Collection do
     Enum.any?(columns, fn col -> col.field == field and Map.get(col, :searchable, false) end)
   end
 
-  defp auto_text_field_names(nil), do: []
+  defp auto_searchable_attrs(nil), do: []
 
-  defp auto_text_field_names(resource) do
+  defp auto_searchable_attrs(resource) do
     if Code.ensure_loaded?(Ash.Resource.Info) and Ash.Resource.Info.resource?(resource) do
       resource
       |> Ash.Resource.Info.public_attributes()
-      |> Enum.filter(&text_like_attribute?/1)
-      |> Enum.map(&Atom.to_string(&1.name))
+      |> Enum.flat_map(fn attr ->
+        case attribute_search_spec(attr) do
+          nil -> []
+          spec -> [{Atom.to_string(attr.name), spec}]
+        end
+      end)
     else
       []
     end
@@ -907,19 +914,52 @@ defmodule Cinder.Collection do
     _ -> []
   end
 
-  defp text_like_attribute?(%{type: type}) do
-    case type do
-      Ash.Type.String -> true
-      Ash.Type.CiString -> true
-      :string -> true
-      :ci_string -> true
-      _ -> false
+  defp attr_search_spec(resource, field) when is_binary(field) do
+    field_atom =
+      try do
+        String.to_existing_atom(field)
+      rescue
+        _ -> nil
+      end
+
+    with true <- Code.ensure_loaded?(Ash.Resource.Info),
+         true <- Ash.Resource.Info.resource?(resource),
+         atom when is_atom(atom) and not is_nil(atom) <- field_atom,
+         attr when not is_nil(attr) <- Ash.Resource.Info.attribute(resource, atom) do
+      attribute_search_spec(attr)
+    else
+      _ -> nil
     end
   end
 
-  defp text_like_attribute?(_), do: false
+  defp attribute_search_spec(%{type: type} = attr) do
+    cond do
+      type in [Ash.Type.String, Ash.Type.CiString, :string, :ci_string] ->
+        %{match: :contains}
 
-  defp synthetic_search_column(field) when is_binary(field) do
+      type in [Ash.Type.Atom, :atom] ->
+        case enum_one_of(attr) do
+          [] -> nil
+          values -> %{match: :enum, values: values}
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp attribute_search_spec(_), do: nil
+
+  defp enum_one_of(%{constraints: constraints}) when is_list(constraints) do
+    case Keyword.get(constraints, :one_of) do
+      values when is_list(values) -> values
+      _ -> []
+    end
+  end
+
+  defp enum_one_of(_), do: []
+
+  defp synthetic_search_column(field, spec) when is_binary(field) and is_map(spec) do
     %{
       field: field,
       label: field,
@@ -932,6 +972,8 @@ defmodule Cinder.Collection do
       slot: nil,
       filter_fn: nil,
       searchable: true,
+      search_match: Map.get(spec, :match, :contains),
+      search_enum_values: Map.get(spec, :values, []),
       sort_cycle: [nil, :asc, :desc],
       __slot__: :synthetic_search
     }
