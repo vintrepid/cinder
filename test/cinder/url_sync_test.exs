@@ -584,4 +584,73 @@ defmodule Cinder.UrlSyncTest do
              "Expected custom param to remain but got: #{result_url}"
     end
   end
+
+  describe "handle_params/4 bootstrap" do
+    defmodule StubPersistence do
+      @behaviour Cinder.Persistence
+
+      @impl true
+      def load(_key, _scope), do: Process.get(:stub_cinder_state)
+
+      @impl true
+      def save(_key, _scope, _state), do: :ok
+    end
+
+    setup do
+      previous = Application.get_env(:cinder, :persistence)
+      Application.put_env(:cinder, :persistence, StubPersistence)
+
+      on_exit(fn ->
+        if previous do
+          Application.put_env(:cinder, :persistence, previous)
+        else
+          Application.delete_env(:cinder, :persistence)
+        end
+      end)
+    end
+
+    defp socket, do: %Phoenix.LiveView.Socket{assigns: %{__changed__: %{}}}
+
+    test "does not bootstrap when persisted state is metadata-only" do
+      # An earlier session that never touched filters can leave behind a
+      # persistence row with only `_filter_fields` — Cinder's own metadata
+      # key. Bootstrapping from that map would push_patch to a URL with no
+      # user state, re-entering handle_params and looping.
+      Process.put(:stub_cinder_state, %{"_filter_fields" => "name,status"})
+
+      result =
+        UrlSync.handle_params(%{}, "http://localhost:4000/users", socket(),
+          persist_key: "users", persist_scope: %{id: "1"}
+        )
+
+      refute result.redirected, "expected no push_patch on metadata-only state"
+      assert Map.has_key?(result.assigns, :url_state)
+    end
+
+    test "bootstraps when persisted state has real user filters" do
+      Process.put(:stub_cinder_state, %{"name" => "john", "_filter_fields" => "name"})
+
+      result =
+        UrlSync.handle_params(%{}, "http://localhost:4000/users", socket(),
+          persist_key: "users", persist_scope: %{id: "1"}
+        )
+
+      assert {:live, :patch, opts} = result.redirected
+      assert opts[:to] =~ "name=john"
+    end
+
+    test "bootstraps from default_filters when no persistence exists" do
+      Process.put(:stub_cinder_state, nil)
+
+      result =
+        UrlSync.handle_params(%{}, "http://localhost:4000/users", socket(),
+          persist_key: "users",
+          persist_scope: %{id: "1"},
+          default_filters: %{"status" => "active"}
+        )
+
+      assert {:live, :patch, opts} = result.redirected
+      assert opts[:to] =~ "status=active"
+    end
+  end
 end

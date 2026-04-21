@@ -340,10 +340,7 @@ defmodule Cinder.UrlSync do
         |> assign_url_state(params, uri)
         |> register_persistence(persist_key, persist_scope)
 
-      bootstrap_state =
-          (persist_key && persist_scope &&
-             Cinder.Persistence.load(persist_key, persist_scope)) ||
-            (map_size(default_filters) > 0 && default_filters) ->
+      bootstrap_state = bootstrap_state(persist_key, persist_scope, default_filters) ->
         socket
         |> register_persistence(persist_key, persist_scope)
         |> Phoenix.LiveView.push_patch(to: build_url(bootstrap_state, uri, socket))
@@ -352,6 +349,22 @@ defmodule Cinder.UrlSync do
         socket
         |> assign_url_state(params, uri)
         |> register_persistence(persist_key, persist_scope)
+    end
+  end
+
+  # Returns the state to bootstrap the URL from, or `nil` when there's nothing
+  # meaningful to restore. Persisted state that's been reduced to pure metadata
+  # (e.g. `%{"_filter_fields" => "..."}` left behind after a user clears every
+  # filter) is treated as empty — pushing it into the URL would not change
+  # `url_has_state?/1`, causing `handle_params` to re-enter this branch and
+  # loop forever.
+  defp bootstrap_state(persist_key, persist_scope, default_filters) do
+    persisted = persist_key && persist_scope && Cinder.Persistence.load(persist_key, persist_scope)
+
+    cond do
+      is_map(persisted) and url_has_state?(persisted) -> persisted
+      map_size(default_filters) > 0 -> default_filters
+      true -> nil
     end
   end
 
