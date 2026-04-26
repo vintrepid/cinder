@@ -410,6 +410,7 @@ defmodule Cinder.LiveComponent do
     socket =
       socket
       |> assign(:selected_ids, new_selected)
+      |> restream_affected(id)
       |> notify_selection_change(:toggle)
 
     {:noreply, socket}
@@ -431,6 +432,7 @@ defmodule Cinder.LiveComponent do
     socket =
       socket
       |> assign(:selected_ids, new_selected)
+      |> restream_all_rows()
       |> notify_selection_change(:select_all)
 
     {:noreply, socket}
@@ -441,9 +443,31 @@ defmodule Cinder.LiveComponent do
     socket =
       socket
       |> assign(:selected_ids, MapSet.new())
+      |> restream_all_rows()
       |> notify_selection_change(:clear)
 
     {:noreply, socket}
+  end
+
+  # Selection state lives in `:selected_ids` (a non-stream assign), but
+  # the row checkboxes are inside `phx-update="stream"`. LiveView only
+  # re-renders streamed items when they're explicitly re-streamed, so
+  # without these re-stream helpers the `checked` attribute stays stale
+  # after select/select-all/clear actions.
+
+  defp restream_all_rows(socket) do
+    stream(socket, :data, socket.assigns.data, reset: true)
+  end
+
+  defp restream_affected(socket, id) do
+    id_field = socket.assigns[:id_field] || :id
+
+    case Enum.find(socket.assigns.data, fn item ->
+           to_string(Map.get(item, id_field)) == to_string(id)
+         end) do
+      nil -> socket
+      item -> stream_insert(socket, :data, item)
+    end
   end
 
   # ============================================================================
