@@ -104,6 +104,78 @@ defmodule Cinder.Collection do
   ```
 
   See `Cinder.Controls` for the full API and more examples.
+
+  ## Bulk Actions
+
+  Use the `<:bulk_action>` slot for any operation across selected rows. The
+  slot renders the button, drives `Ash.bulk_update` / `Ash.bulk_destroy`
+  (or your code-interface function), and routes results to the parent.
+
+  ```heex
+  <Cinder.collection id="users" query={@query} actor={@current_user} selectable>
+    <:bulk_action
+      action={:approve}
+      label="Approve ({count})"
+      variant={:primary}
+      confirm="Approve {count} user(s)?"
+      on_success={:approved}
+      on_error={:approve_failed}
+    />
+    <:col field="email">{@row.email}</:col>
+  </Cinder.collection>
+  ```
+
+  Then handle the parent messages:
+
+  ```elixir
+  def handle_info({:approved, %{count: n}}, socket),
+    do: {:noreply, put_flash(socket, :info, "Approved \#{n} user(s)")}
+
+  def handle_info({:approve_failed, %{reason: reason}}, socket),
+    do: {:noreply, put_flash(socket, :error, "Approve failed: \#{inspect(reason)}")}
+  ```
+
+  ### Why use the slot
+
+  The slot calls `Cinder.BulkActionExecutor`, which goes through
+  `Ash.bulk_update` / `bulk_destroy`. That path:
+
+  - **Authorizes correctly** — uses the `actor` you passed to the collection.
+  - **Surfaces errors** — every failure is `Logger.error`'d *and*, if you
+    provide `on_error`, dispatched to the parent. There is no path where
+    a failure is silently dropped.
+  - **Is idempotent when the action is** — re-running an action like
+    `update :approve do; change set_attribute(:approved, true); end` on
+    already-approved records is a no-op, no double-counting, no errors.
+  - **Is transactional** — the whole batch succeeds or fails as one unit;
+    you don't end up half-applied.
+
+  ### Anti-pattern: handrolling `Enum.reduce` over `selected_ids`
+
+  Don't do this:
+
+  ```elixir
+  # BAD — silently swallows authorization failures and update errors,
+  # double-counts on retry, no transaction.
+  def handle_event("approve_selected", _params, socket) do
+    count =
+      Enum.reduce(socket.assigns.selected_ids, 0, fn id, acc ->
+        case Ash.get(MyApp.User, id) do
+          {:ok, user} ->
+            user |> Ash.Changeset.for_update(:approve, %{}) |> Ash.update()
+            acc + 1
+          _ -> acc  # <-- THE BUG: error never reaches the user or the logs
+        end
+      end)
+    {:noreply, put_flash(socket, :info, "Approved \#{count}")}
+  end
+  ```
+
+  Two failure modes the handroll hides: the `Ash.get` `_ ->` arm eats every
+  authorization or not-found error; and the `Ash.update` return value is
+  ignored, so an update failure still increments the counter. Use
+  `<:bulk_action>` instead — Cinder owns these paths and cannot accidentally
+  drop an error.
   """
 
   use Phoenix.Component
