@@ -57,8 +57,7 @@ if Code.ensure_loaded?(Igniter) do
           page_size: :integer,
           bulk_actions: :string,
           route: :string,
-          action: :string,
-          report_handrolls: :boolean
+          action: :string
         ]
       }
     end
@@ -73,186 +72,13 @@ if Code.ensure_loaded?(Igniter) do
 
       ensure_resource_compiled!(resource)
 
-      cond do
-        Keyword.get(opts, :report_handrolls, false) ->
-          report_handrolls(igniter, lv_module, resource)
+      template = build_template(resource, opts)
+      validate_template!(template)
 
-        true ->
-          template = build_template(resource, opts)
-          validate_template!(template)
-
-          igniter
-          |> upsert_live_view(lv_module, resource, template)
-          |> maybe_print_route_hint(opts, lv_arg)
-      end
+      igniter
+      |> upsert_live_view(lv_module, resource, template)
+      |> maybe_print_route_hint(opts, lv_arg)
     end
-
-    # --- Handroll detection (read-only report) ---
-
-    @doc false
-    def report_handrolls(igniter, lv_module, resource) do
-      case Igniter.Project.Module.module_exists(igniter, lv_module) do
-        {false, igniter} ->
-          Igniter.add_notice(
-            igniter,
-            "#{inspect(lv_module)} does not exist yet — nothing to report."
-          )
-
-        {true, igniter} ->
-          path = Igniter.Project.Module.proper_location(igniter, lv_module)
-          source = File.read!(path)
-
-          case Sourceror.parse_string(source) do
-            {:error, _} ->
-              Igniter.add_warning(igniter, "Could not parse #{path}")
-
-            {:ok, ast} ->
-              violations =
-                MaestroTool.Lint.Checks.HandrolledCinderBulk.check(ast, %{
-                  path: path,
-                  source: source
-                })
-
-              if violations == [] do
-                Igniter.add_notice(igniter, "No handrolled bulk actions in #{path}.")
-              else
-                report_lines = build_handroll_report(violations, ast, resource, path)
-                Igniter.add_notice(igniter, report_lines)
-              end
-          end
-      end
-    end
-
-    # For each violation line, find the surrounding handle_event clause
-    # and infer the would-be bulk-action conversion.
-    defp build_handroll_report(violations, ast, resource, path) do
-      handlers = collect_handle_event_handrolls(ast)
-
-      header = "Handrolled bulk actions in #{path}:\n"
-
-      body =
-        Enum.map_join(violations, "\n", fn v ->
-          handler = Enum.find(handlers, fn h -> abs(h.line - v.line) <= 4 end)
-          format_handroll(v, handler, resource)
-        end)
-
-      header <> body
-    end
-
-    defp format_handroll(v, nil, _resource) do
-      "  - line #{v.line}: handroll detected; could not match to a handle_event clause"
-    end
-
-    defp format_handroll(v, handler, resource) do
-      action_atom = action_atom_from_event(handler.event)
-      actions_index = MapSet.new(Ash.Resource.Info.actions(resource), & &1.name)
-      action_status =
-        cond do
-          handler.kind == :destroy -> "uses :destroy (already exists)"
-          MapSet.member?(actions_index, action_atom) -> "action :#{action_atom} exists on #{inspect(resource)}"
-          true -> "would need new action :#{action_atom} on #{inspect(resource)}"
-        end
-
-      """
-        - line #{v.line}: handle_event "#{handler.event}"
-            kind: #{handler.kind}
-            inferred action: :#{handler.kind == :destroy && "destroy" || action_atom}
-            on resource: #{action_status}
-            success message: :#{success_atom(action_atom)}
-            error message: :#{error_atom(action_atom)}\
-      """
-    end
-
-    # Walk for `def handle_event(<name>_selected, _params, socket) do ... end`
-    # whose body matches the handroll pattern; for each, capture event name,
-    # body shape (destroy / update with action atom / unknown), and line.
-    defp collect_handle_event_handrolls(ast) do
-      {_, handlers} =
-        Macro.prewalk(ast, [], fn
-          {:def, m,
-           [
-             {:handle_event, _, [event_str, _params, _socket]},
-             [{{:__block__, _, [:do]}, body}]
-           ]} = node,
-          acc
-          when is_binary(event_str) ->
-            handle_def_node(node, m, event_str, body, acc)
-
-          # Sourceror sometimes represents the string differently
-          {:def, m, [{:handle_event, _, args}, [do: body]]} = node, acc ->
-            case args do
-              [event, _params, _socket] ->
-                event_str = unwrap_string(event)
-
-                if is_binary(event_str) do
-                  handle_def_node(node, m, event_str, body, acc)
-                else
-                  {node, acc}
-                end
-
-              _ ->
-                {node, acc}
-            end
-
-          node, acc ->
-            {node, acc}
-        end)
-
-      Enum.reverse(handlers)
-    end
-
-    defp handle_def_node(node, m, event_str, body, acc) do
-      kind = classify_handler_body(body)
-
-      if kind != :not_handroll and String.ends_with?(event_str, "_selected") do
-        {node, [%{event: event_str, line: m[:line] || 1, kind: kind} | acc]}
-      else
-        {node, acc}
-      end
-    end
-
-    defp unwrap_string({:__block__, _, [str]}) when is_binary(str), do: str
-    defp unwrap_string(str) when is_binary(str), do: str
-    defp unwrap_string(_), do: nil
-
-    # Decide if the handler body looks like a handrolled bulk action and
-    # infer whether the inner work is a destroy or an update.
-    defp classify_handler_body(body) do
-      destroy? = ast_contains_call?(body, [:Ash], :destroy)
-      update? = ast_contains_call?(body, [:Ash], :update)
-
-      cond do
-        destroy? -> :destroy
-        update? -> :update
-        true -> :not_handroll
-      end
-    end
-
-    defp ast_contains_call?(ast, target_aliases, target_func) do
-      {_, found?} =
-        Macro.prewalk(ast, false, fn
-          {{:., _, [{:__aliases__, _, ^target_aliases}, ^target_func]}, _, _} = node, _ ->
-            {node, true}
-
-          node, acc ->
-            {node, acc}
-        end)
-
-      found?
-    end
-
-    # Map "approve_selected" → :approve, "mark_inactive_selected" → :mark_inactive
-    defp action_atom_from_event(event_str) do
-      event_str
-      |> String.trim_trailing("_selected")
-      |> String.to_atom()
-    end
-
-    defp success_atom(:destroy), do: :deleted
-    defp success_atom(action), do: String.to_atom(Atom.to_string(action) <> "d")
-
-    defp error_atom(:destroy), do: :delete_failed
-    defp error_atom(action), do: String.to_atom(Atom.to_string(action) <> "_failed")
 
     # --- Resource introspection ---
 
