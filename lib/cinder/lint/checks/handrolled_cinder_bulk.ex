@@ -100,9 +100,12 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
   @impl true
   def fix(source, violation) do
     with {:ok, ast} <- Sourceror.parse_string(source),
-         {:ok, handler} <- find_enclosing_handle_event(ast, violation.line),
-         :destroy <- classify_handler_body(handler.body) do
-      apply_destroy_fix(source, ast, handler)
+         {:ok, handler} <- find_enclosing_handle_event(ast, violation.line) do
+      case classify_handler_body(handler.body) do
+        :destroy -> apply_destroy_fix(source, ast, handler)
+        :update -> apply_update_fix(source, ast, handler)
+        _ -> source
+      end
     else
       _ -> source
     end
@@ -215,7 +218,8 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
   defp classify_handler_body(body) do
     cond do
       contains_call?(body, [:Ash], :destroy) -> :destroy
-      contains_call?(body, [:Ash], :update) -> :update
+      # `Ash.update(...)` OR a code-interface call like `MyResource.update(...)`
+      contains_any_call?(body, :update) -> :update
       true -> :unknown
     end
   end
@@ -224,6 +228,17 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
     {_, found?} =
       Macro.prewalk(ast, false, fn
         {{:., _, [{:__aliases__, _, ^mod}, ^fun]}, _, _} = n, _ -> {n, true}
+        n, acc -> {n, acc}
+      end)
+
+    found?
+  end
+
+  # Any module-qualified call to `fun`, regardless of which module.
+  defp contains_any_call?(ast, fun) do
+    {_, found?} =
+      Macro.prewalk(ast, false, fn
+        {{:., _, [{:__aliases__, _, _}, ^fun]}, _, _} = n, _ -> {n, true}
         n, acc -> {n, acc}
       end)
 
@@ -239,7 +254,7 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
 
     source
     |> remove_handle_event_def(handler.event, ast)
-    |> add_handle_info_clauses(success, error)
+    |> add_handle_info_clauses(success, error, "Deleted")
     |> rewrite_render_template(event, fn tree ->
       tree
       |> Cinder.HEExTransforms.insert_bulk_action_slot(:destroy,
@@ -252,6 +267,254 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
       |> Cinder.HEExTransforms.remove_button_with_phx_click(event)
     end)
   end
+
+  # --- The update fix (cross-file: needs an idempotent action on the resource) ---
+
+  defp apply_update_fix(source, _ast, handler) do
+    with {:ok, raw_mod} <- extract_resource_module(handler.body),
+         resource_mod = resolve_alias_in_source(raw_mod, source),
+         {:ok, param_map} <- extract_param_map(handler.body, resource_mod),
+         action_atom <- action_atom_from_event(handler.event),
+         success = success_atom(action_atom),
+         error = error_atom(action_atom),
+         {:ok, _} <- ensure_idempotent_action_on_resource(resource_mod, action_atom, param_map) do
+      action_label = humanize(action_atom)
+
+      source
+      |> remove_handle_event_def(handler.event, nil)
+      |> add_handle_info_clauses(success, error, action_label_past(action_label))
+      |> rewrite_render_template(handler.event, fn tree ->
+        tree
+        |> Cinder.HEExTransforms.insert_bulk_action_slot(action_atom,
+          label: "#{action_label} ({count})",
+          confirm: "#{action_label} {count}?",
+          on_success: success,
+          on_error: error
+        )
+        |> Cinder.HEExTransforms.remove_button_with_phx_click(handler.event)
+      end)
+    else
+      _ -> source
+    end
+  end
+
+  # Find Ash.get(<aliases>, _) in the handler body to learn the resource
+  defp extract_resource_module(body) do
+    {_, found} =
+      Macro.prewalk(body, nil, fn
+        {{:., _, [{:__aliases__, _, [:Ash]}, :get]}, _, [resource_ast | _]} = node, nil ->
+          {node, alias_to_module(resource_ast)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    case found do
+      nil -> :error
+      mod -> {:ok, mod}
+    end
+  end
+
+  # Param map shapes:
+  #   Ash.Changeset.for_update(:action_atom, %{key: val, ...})
+  #   <Resource>.update(record, %{key: val, ...})
+  defp extract_param_map(body, _resource) do
+    {_, found} =
+      Macro.prewalk(body, nil, fn
+        # Ash.Changeset.for_update(action, params)
+        {{:., _, [{:__aliases__, _, [:Ash, :Changeset]}, :for_update]}, _, [_action, params_ast | _]} = node,
+        nil ->
+          {node, decode_map(params_ast)}
+
+        # <Module>.update(record, params)
+        {{:., _, [{:__aliases__, _, _}, :update]}, _, [_record, params_ast | _]} = node, nil ->
+          {node, decode_map(params_ast)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    case found do
+      nil -> :error
+      [] -> :error
+      kw -> {:ok, kw}
+    end
+  end
+
+  # Decode `%{a: 1, b: :x}` AST into a keyword list of {atom, ast_value}.
+  defp decode_map({:%{}, _, pairs}) do
+    Enum.map(pairs, fn
+      {{:__block__, _, [k]}, v} when is_atom(k) -> {k, unwrap_value(v)}
+      {k, v} when is_atom(k) -> {k, unwrap_value(v)}
+    end)
+  end
+
+  defp decode_map({:__block__, _, [{:%{}, _, _} = m]}), do: decode_map(m)
+  defp decode_map(_), do: nil
+
+  defp unwrap_value({:__block__, _, [v]}), do: v
+  defp unwrap_value(v), do: v
+
+  defp alias_to_module({:__aliases__, _, segments}) when is_list(segments) do
+    Module.concat(segments)
+  end
+
+  defp alias_to_module(_), do: nil
+
+  # If the bare module isn't loadable, scan the source for `alias X.Y.Z` and
+  # match by the last segment. Returns the resolved module (or the input
+  # unchanged when nothing matches).
+  defp resolve_alias_in_source(mod, source) do
+    if Code.ensure_loaded?(mod) do
+      mod
+    else
+      short = mod |> Module.split() |> List.last()
+
+      aliases =
+        Regex.scan(~r/alias\s+([\w.]+(?:\.\{[^}]+\})?)/, source)
+        |> Enum.flat_map(fn [_, expr] -> expand_alias_expr(expr) end)
+
+      case Enum.find(aliases, fn full -> List.last(String.split(full, ".")) == short end) do
+        nil -> mod
+        full -> Module.concat(String.split(full, "."))
+      end
+    end
+  end
+
+  # Expand `Foo.Bar.{A, B}` shorthand into ["Foo.Bar.A", "Foo.Bar.B"].
+  defp expand_alias_expr(expr) do
+    case Regex.run(~r/^([\w.]+)\.\{([^}]+)\}$/, expr) do
+      [_, prefix, inner] ->
+        inner
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.map(fn name -> prefix <> "." <> name end)
+
+      nil ->
+        [expr]
+    end
+  end
+
+  # If the action already exists on the resource, treat as already-fixed.
+  # Otherwise splice an idempotent update action and write the resource file.
+  defp ensure_idempotent_action_on_resource(resource_mod, action_atom, param_kw) do
+    if Code.ensure_loaded?(resource_mod) and action_exists?(resource_mod, action_atom) do
+      {:ok, :already_present}
+    else
+      splice_action_into_resource_file(resource_mod, action_atom, param_kw)
+    end
+  end
+
+  defp action_exists?(resource_mod, action_atom) do
+    Enum.any?(Ash.Resource.Info.actions(resource_mod), &(&1.name == action_atom))
+  end
+
+  defp splice_action_into_resource_file(resource_mod, action_atom, param_kw) do
+    case resource_source_path(resource_mod) do
+      nil ->
+        :error
+
+      path ->
+        source = File.read!(path)
+        new_source = insert_action_block(source, action_atom, param_kw)
+
+        if new_source == source do
+          {:ok, :no_change}
+        else
+          File.write!(path, new_source)
+          {:ok, :spliced}
+        end
+    end
+  end
+
+  defp resource_source_path(resource_mod) do
+    case resource_mod.module_info(:compile)[:source] do
+      nil -> nil
+      src -> to_string(src)
+    end
+  end
+
+  # Insert `update :name do ... end` just before `end` of the `actions do`
+  # block. String-level operation guarded by AST awareness — finds the
+  # `actions do` opening via Sourceror, locates its end line, splices.
+  defp insert_action_block(source, action_atom, param_kw) do
+    case Sourceror.parse_string(source) do
+      {:error, _} ->
+        source
+
+      {:ok, ast} ->
+        case find_actions_block_end_line(ast) do
+          nil -> source
+          end_line -> splice_at_end_line(source, end_line, render_action(action_atom, param_kw))
+        end
+    end
+  end
+
+  defp find_actions_block_end_line(ast) do
+    {_, line} =
+      Macro.prewalk(ast, nil, fn
+        {:actions, m, [[do: _]]} = node, nil ->
+          {node, m[:end][:line]}
+
+        {:actions, m, [[{{:__block__, _, [:do]}, _}]]} = node, nil ->
+          {node, m[:end][:line]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    line
+  end
+
+  defp splice_at_end_line(source, end_line, block) do
+    lines = String.split(source, "\n")
+
+    {before_lines, end_and_after} = Enum.split(lines, end_line - 1)
+
+    indent = "    "
+    indented_block = String.split(block, "\n") |> Enum.map_join("\n", &(indent <> &1))
+
+    (before_lines ++ [indented_block] ++ end_and_after)
+    |> Enum.join("\n")
+  end
+
+  defp render_action(action_atom, param_kw) do
+    changes =
+      param_kw
+      |> Enum.map_join("\n      ",
+        fn {k, v} -> "change set_attribute(:#{k}, #{Macro.to_string(v)})" end)
+
+    """
+    update :#{action_atom} do
+      description "Auto-generated by Cinder.Lint.Checks.HandrolledCinderBulk fix/2."
+      accept []
+      require_atomic? true
+      #{changes}
+    end
+    """
+  end
+
+  defp humanize(name) when is_atom(name) do
+    name
+    |> Atom.to_string()
+    |> String.split("_")
+    |> Enum.map_join(" ", &String.capitalize/1)
+  end
+
+  defp action_label_past("Delete"), do: "Deleted"
+  defp action_label_past(label), do: label <> "d"
+
+  defp action_atom_from_event(event_str) do
+    event_str
+    |> String.trim_trailing("_selected")
+    |> String.to_atom()
+  end
+
+  defp success_atom(:destroy), do: :deleted
+  defp success_atom(action), do: String.to_atom(Atom.to_string(action) <> "d")
+
+  defp error_atom(:destroy), do: :delete_failed
+  defp error_atom(action), do: String.to_atom(Atom.to_string(action) <> "_failed")
 
   # Remove the `def handle_event("<event>_selected", ...) do ... end` clause via
   # zipper navigation. We re-parse to keep zipper positions clean.
@@ -306,9 +569,11 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
 
   # Append `def handle_info({:<success>, _}, socket)` and `def handle_info({:<error>, ...}, socket)`
   # clauses to the module. Idempotent — checks for existing clauses with the same atom.
-  defp add_handle_info_clauses(source, success, error) do
+  defp add_handle_info_clauses(source, success, error, success_label) do
     needs_success = not has_handle_info?(source, success)
     needs_error = not has_handle_info?(source, error)
+
+    error_label = String.replace(success_label, ~r/d$/, "") <> " failed"
 
     cond do
       not (needs_success or needs_error) ->
@@ -322,14 +587,14 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
 
                 @impl true
                 def handle_info({:#{success}, %{count: count}}, socket) do
-                  {:noreply, put_flash(socket, :info, "Deleted \#{count} record(s)")}
+                  {:noreply, put_flash(socket, :info, "#{success_label} \#{count} record(s)")}
                 end
               """,
             needs_error &&
               ~s"""
 
                 def handle_info({:#{error}, %{reason: reason}}, socket) do
-                  {:noreply, put_flash(socket, :error, "Delete failed: \#{inspect(reason)}")}
+                  {:noreply, put_flash(socket, :error, "#{error_label}: \#{inspect(reason)}")}
                 end
               """
           ]
