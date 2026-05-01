@@ -64,6 +64,7 @@ defmodule Cinder.MixProject do
       {:makeup_html, ">= 0.0.0", only: :dev},
       {:igniter, "~> 0.5", only: [:dev, :test]},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
+      {:maestro_tool, path: "../maestro_tool", only: [:dev]},
       {:mimic, "~> 2.3", only: :test},
       {:ex_check, "~> 0.16", only: [:dev], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
