@@ -464,6 +464,53 @@ def handle_info({:delete_failed, %{reason: reason}}, socket) do
 end
 ```
 
+### Anti-pattern: do NOT handroll a bulk action
+
+The slot calls `Cinder.BulkActionExecutor`, which goes through
+`Ash.bulk_update` / `Ash.bulk_destroy`, authorizes with the collection's
+actor, logs every failure (`Logger.error`), and dispatches both success
+and error to the parent. There is no path where a failure is silently
+dropped.
+
+Handrolling — typically `Enum.reduce` over `selected_ids` with
+`Ash.get` + `Ash.update` per id — recreates several bugs the slot
+already prevents:
+
+```elixir
+# BAD — silently swallows authorization failures and update errors,
+# double-counts on retry, no transaction.
+def handle_event("approve_selected", _params, socket) do
+  count =
+    Enum.reduce(socket.assigns.selected_ids, 0, fn id, acc ->
+      case Ash.get(MyApp.User, id) do
+        {:ok, user} ->
+          user |> Ash.Changeset.for_update(:approve, %{}) |> Ash.update()
+          acc + 1
+        _ -> acc  # <-- the bug: error never reaches the user or the logs
+      end
+    end)
+  {:noreply, put_flash(socket, :info, "Approved #{count}")}
+end
+```
+
+Two failure modes hidden here: the `Ash.get` `_ ->` arm eats every
+authorization or not-found error; and the `Ash.update` return value is
+ignored, so a failed update still increments the counter.
+
+For idempotency, define the action so re-running on already-affected
+records is a no-op:
+
+```elixir
+update :approve do
+  accept []
+  require_atomic? true
+  change set_attribute(:approved, true)
+end
+```
+
+Then declare `<:bulk_action action={:approve} ...>` and let Cinder run
+it.
+
 ## Localization
 
 All user-facing strings use `dgettext("cinder", ...)`. Supported locales: Brazilian Portuguese (pt_BR), Danish (da), Dutch (nl), English (en), German (de), Norwegian (no), Swedish (sv).
