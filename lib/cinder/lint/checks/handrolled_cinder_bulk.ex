@@ -516,12 +516,15 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
   defp error_atom(:destroy), do: :delete_failed
   defp error_atom(action), do: String.to_atom(Atom.to_string(action) <> "_failed")
 
-  # Remove the `def handle_event("<event>_selected", ...) do ... end` clause via
-  # zipper navigation. We re-parse to keep zipper positions clean.
+  # Remove the `def handle_event("<event>_selected", ...) do ... end` clause.
+  # Two passes: first mark + strip the matching def, then normalize the
+  # resulting orphan attribute runs (multiple consecutive @impl/@spec
+  # collapse to the last of each kind; runs not followed by a def are
+  # dropped entirely).
   defp remove_handle_event_def(source, event, _ast) do
     {:ok, ast} = Sourceror.parse_string(source)
 
-    new_ast =
+    marked =
       Macro.prewalk(ast, fn
         {:def, _m, [{:handle_event, _, args}, [{{:__block__, _, [:do]}, _body}]]} = node ->
           if matches_event?(args, event), do: :__remove__, else: node
@@ -529,17 +532,19 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
         {:def, _m, [{:handle_event, _, args}, [do: _body]]} = node ->
           if matches_event?(args, event), do: :__remove__, else: node
 
-        # Strip @impl true preceding a removed def — appears as a __block__ pair
-        {:__block__, m, exprs} ->
-          {:__block__, m, drop_impl_before_removed(exprs)}
-
         node ->
           node
       end)
 
-    new_ast = strip_removed(new_ast)
+    cleaned = strip_removed(marked)
 
-    Sourceror.to_string(new_ast)
+    normalized =
+      Macro.prewalk(cleaned, fn
+        {:__block__, m, exprs} -> {:__block__, m, normalize_attr_runs(exprs)}
+        node -> node
+      end)
+
+    Sourceror.to_string(normalized)
   end
 
   defp matches_event?([event_node, _, _], event) do
@@ -551,13 +556,47 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
 
   defp matches_event?(_, _), do: false
 
-  defp drop_impl_before_removed(exprs) do
-    exprs
-    |> Enum.chunk_every(2, 1, [nil])
-    |> Enum.flat_map(fn
-      [{:@, _, [{:impl, _, [{:__block__, _, [true]}]}]}, :__remove__] -> []
-      [first, _] -> [first]
-    end)
+  # Walk through block expressions, dropping orphan @impl/@spec runs.
+  # An attr "run" is one or more consecutive @impl true / @spec ... entries.
+  # If a run is immediately followed by a `def`, keep only the LAST @impl
+  # and the LAST @spec from the run (deduping orphans accumulated by prior
+  # auto-fix passes). If a run is followed by `:__remove__` or anything
+  # else (no def comes), drop the whole run.
+  defp normalize_attr_runs([]), do: []
+
+  defp normalize_attr_runs([expr | rest]) do
+    if attr?(expr) do
+      {run, tail} = take_attr_run([expr | rest])
+
+      case tail do
+        [{:def, _, _} = def_node | tail_rest] ->
+          dedupe_attrs(run) ++ [def_node | normalize_attr_runs(tail_rest)]
+
+        _ ->
+          normalize_attr_runs(tail)
+      end
+    else
+      [expr | normalize_attr_runs(rest)]
+    end
+  end
+
+  defp take_attr_run(exprs) do
+    Enum.split_while(exprs, &attr?/1)
+  end
+
+  defp attr?({:@, _, [{:impl, _, _}]}), do: true
+  defp attr?({:@, _, [{:spec, _, _}]}), do: true
+  defp attr?(_), do: false
+
+  defp dedupe_attrs(attrs) do
+    {last_impl, last_spec} =
+      Enum.reduce(attrs, {nil, nil}, fn
+        {:@, _, [{:impl, _, _}]} = a, {_, spec} -> {a, spec}
+        {:@, _, [{:spec, _, _}]} = a, {impl, _} -> {impl, a}
+        _, acc -> acc
+      end)
+
+    [last_impl, last_spec] |> Enum.reject(&is_nil/1)
   end
 
   defp strip_removed(ast) do
@@ -567,47 +606,116 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
     end)
   end
 
-  # Append `def handle_info({:<success>, _}, socket)` and `def handle_info({:<error>, ...}, socket)`
-  # clauses to the module. Idempotent — checks for existing clauses with the same atom.
+  # Insert `def handle_info({:<success>, _}, socket)` and `def handle_info({:<error>, ...}, socket)`
+  # clauses, grouped adjacent to any existing `def handle_info` in the module.
+  # If none exist, append before the module's final `end`. Idempotent — skips
+  # clauses for atoms that already have a handle_info definition, and skips
+  # the `@impl true` annotation when an existing handle_info already declares it.
   defp add_handle_info_clauses(source, success, error, success_label) do
     needs_success = not has_handle_info?(source, success)
     needs_error = not has_handle_info?(source, error)
 
-    error_label = String.replace(success_label, ~r/d$/, "") <> " failed"
+    if not (needs_success or needs_error) do
+      source
+    else
+      error_label = String.replace(success_label, ~r/d$/, "") <> " failed"
+      already_impl_marked? = has_existing_handle_info_with_impl?(source)
+      impl_prefix = if already_impl_marked?, do: "", else: "  @impl true\n"
 
-    cond do
-      not (needs_success or needs_error) ->
-        source
+      new_clauses =
+        [
+          needs_success &&
+            ~s"""
 
-      true ->
-        new_clauses =
-          [
-            needs_success &&
-              ~s"""
+            #{impl_prefix}  def handle_info({:#{success}, %{count: count}}, socket) do
+                {:noreply, put_flash(socket, :info, "#{success_label} \#{count} record(s)")}
+              end
+            """,
+          needs_error &&
+            ~s"""
 
-                @impl true
-                def handle_info({:#{success}, %{count: count}}, socket) do
-                  {:noreply, put_flash(socket, :info, "#{success_label} \#{count} record(s)")}
-                end
-              """,
-            needs_error &&
-              ~s"""
+              def handle_info({:#{error}, %{reason: reason}}, socket) do
+                {:noreply, put_flash(socket, :error, "#{error_label}: \#{inspect(reason)}")}
+              end
+            """
+        ]
+        |> Enum.filter(& &1)
+        |> Enum.join("")
 
-                def handle_info({:#{error}, %{reason: reason}}, socket) do
-                  {:noreply, put_flash(socket, :error, "#{error_label}: \#{inspect(reason)}")}
-                end
-              """
-          ]
-          |> Enum.filter(& &1)
-          |> Enum.join("")
-
-        # Insert before the last `end` in the module body
-        Regex.replace(~r/(\nend\s*\n*)\z/, source, new_clauses <> "\n\\1")
+      insert_after_last_handle_info(source, new_clauses)
     end
   end
 
   defp has_handle_info?(source, atom) do
     String.contains?(source, "def handle_info({:#{atom}")
+  end
+
+  # Cheap check: scan the source AST for any `def handle_info(...)` and look
+  # at whether the preceding (sibling) statement is `@impl true`.
+  defp has_existing_handle_info_with_impl?(source) do
+    case Sourceror.parse_string(source) do
+      {:error, _} ->
+        false
+
+      {:ok, ast} ->
+        {_, found?} =
+          Macro.prewalk(ast, false, fn
+            {:__block__, _, exprs} = node, acc ->
+              {node, acc or block_has_impl_then_handle_info?(exprs)}
+
+            node, acc ->
+              {node, acc}
+          end)
+
+        found?
+    end
+  end
+
+  defp block_has_impl_then_handle_info?(exprs) do
+    exprs
+    |> Enum.chunk_every(2, 1, [nil])
+    |> Enum.any?(fn
+      [{:@, _, [{:impl, _, _}]}, {:def, _, [{:handle_info, _, _} | _]}] -> true
+      _ -> false
+    end)
+  end
+
+  # Find the END line of the LAST `def handle_info(...)` clause and insert
+  # the new clauses right after it. If no handle_info exists, fall back to
+  # inserting before the module's closing `end`.
+  defp insert_after_last_handle_info(source, new_clauses) do
+    case last_handle_info_end_line(source) do
+      nil ->
+        Regex.replace(~r/(\nend\s*\n*)\z/, source, new_clauses <> "\n\\1")
+
+      end_line ->
+        lines = String.split(source, "\n")
+        {before_lines, after_lines} = Enum.split(lines, end_line)
+        Enum.join(before_lines ++ [new_clauses] ++ after_lines, "\n")
+    end
+  end
+
+  defp last_handle_info_end_line(source) do
+    case Sourceror.parse_string(source) do
+      {:error, _} ->
+        nil
+
+      {:ok, ast} ->
+        {_, line} =
+          Macro.prewalk(ast, nil, fn
+            {:def, m, [{:handle_info, _, _} | _]} = node, acc ->
+              new_acc = max(acc || 0, m[:end][:line] || m[:line] || 0)
+              {node, new_acc}
+
+            node, acc ->
+              {node, acc}
+          end)
+
+        case line do
+          n when is_integer(n) and n > 0 -> n
+          _ -> nil
+        end
+    end
   end
 
   # --- HEEx sigil rewrite ---
