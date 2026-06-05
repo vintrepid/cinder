@@ -228,6 +228,14 @@ defmodule Cinder.Collection do
   )
 
   attr(:on_state_change, :any, default: nil, doc: "Custom state change handler")
+
+  attr(:on_query_change, :any,
+    default: nil,
+    doc:
+      "Event name sent to parent when the query changes. " <>
+        "Parent receives {event_name, %{query: Ash.Query.t(), id: string()}}."
+  )
+
   attr(:show_pagination, :boolean, default: true, doc: "Whether to show pagination controls")
 
   attr(:default_filters, :map,
@@ -271,7 +279,7 @@ defmodule Cinder.Collection do
     doc: "Whether to show sort controls (auto-detected if nil, list/grid only)"
   )
 
-  attr(:loading_message, :string, default: "Loading...", doc: "Message to show while loading")
+  attr(:loading_message, :string, default: nil, doc: "Message to show while loading")
 
   attr(:filters_label, :string,
     default: nil,
@@ -446,8 +454,9 @@ defmodule Cinder.Collection do
       |> assign_new(:url_state, fn -> false end)
       |> assign_new(:query_opts, fn -> [] end)
       |> assign_new(:on_state_change, fn -> nil end)
+      |> assign_new(:on_query_change, fn -> nil end)
       |> assign_new(:show_pagination, fn -> true end)
-      |> assign_new(:loading_message, fn -> dgettext("cinder", "Loading...") end)
+      |> assign(:loading_message, assigns[:loading_message] || dgettext("cinder", "Loading..."))
       |> assign(:filters_label, assigns[:filters_label] || dgettext("cinder", "Filters"))
       |> assign(:sort_label, assigns[:sort_label] || dgettext("cinder", "Sort by:"))
       |> assign(:empty_message, assigns.empty_message || dgettext("cinder", "No results found"))
@@ -569,9 +578,6 @@ defmodule Cinder.Collection do
         scope={@scope}
         page_size_config={@page_size_config}
         theme={@resolved_theme}
-        url_filters={get_url_filters(@url_state)}
-        url_page={get_url_page(@url_state)}
-        url_sort={get_url_sort(@url_state)}
         url_raw_params={get_raw_url_params(@url_state)}
         query_opts={@query_opts}
         on_state_change={get_state_change_handler(@url_state, @on_state_change, @id)}
@@ -602,6 +608,7 @@ defmodule Cinder.Collection do
         id_field={@id_field}
         selectable={@selectable}
         on_selection_change={@on_selection_change}
+        on_query_change={@on_query_change}
         bulk_action_slots={@bulk_action_slots}
         sort_mode={@sort_mode}
         default_filters={@default_filters}
@@ -935,7 +942,9 @@ defmodule Cinder.Collection do
       :auto ->
         resource
         |> auto_searchable_attrs()
-        |> Enum.reject(fn {field, _spec} -> already_searchable?(field, existing_query_columns) end)
+        |> Enum.reject(fn {field, _spec} ->
+          already_searchable?(field, existing_query_columns)
+        end)
         |> Enum.map(fn {field, spec} -> synthetic_search_column(field, spec) end)
 
       {:fields, fields} when is_list(fields) ->
@@ -1197,21 +1206,6 @@ defmodule Cinder.Collection do
   # ============================================================================
   # PRIVATE HELPERS - URL State
   # ============================================================================
-
-  defp get_url_filters(url_state) when is_map(url_state), do: Map.get(url_state, :filters, %{})
-  defp get_url_filters(_), do: %{}
-
-  defp get_url_page(url_state) when is_map(url_state), do: Map.get(url_state, :current_page, nil)
-  defp get_url_page(_), do: nil
-
-  defp get_url_sort(url_state) when is_map(url_state) do
-    case Map.get(url_state, :sort_by, []) do
-      [] -> nil
-      sort -> sort
-    end
-  end
-
-  defp get_url_sort(_), do: nil
 
   defp get_raw_url_params(url_state) when is_map(url_state) do
     Map.get(url_state, :filters, %{})

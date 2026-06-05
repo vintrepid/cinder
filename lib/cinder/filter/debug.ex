@@ -405,5 +405,9 @@ defmodule Cinder.Filter.Debug do
       attribute(:value, :integer)
       attribute(:active, :boolean)
     end
+
+    actions do
+      defaults([:read, :create, :update, :destroy])
+    end
   end
 end

@@ -306,58 +306,91 @@ defmodule Cinder.Filter.Helpers do
     require Ash.Query
     import Ash.Expr
 
-    case parse_field_notation(field) do
-      {:direct, field_name} ->
-        field_atom = String.to_existing_atom(field_name)
-        apply_operator_to_field(query, field_atom, value, operator, opts)
+    result =
+      case parse_field_notation(field) do
+        {:direct, field_name} ->
+          with {:ok, field_atom} <- existing_atom(field_name) do
+            apply_operator_to_field(query, field_atom, value, operator, opts)
+          end
 
-      {:relationship, rel_path, field_name} ->
-        rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
-        field_atom = String.to_existing_atom(field_name)
-        apply_operator_to_relationship(query, rel_path_atoms, field_atom, value, operator, opts)
+        {:relationship, rel_path, field_name} ->
+          with {:ok, field_atom} <- existing_atom(field_name) do
+            rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
 
-      {:embedded, embed_field, field_name} ->
-        embed_atom = String.to_existing_atom(embed_field)
-        field_atom = String.to_existing_atom(field_name)
-        apply_operator_to_embedded(query, embed_atom, field_atom, value, operator, opts)
+            apply_operator_to_relationship(
+              query,
+              rel_path_atoms,
+              field_atom,
+              value,
+              operator,
+              opts
+            )
+          end
 
-      {:nested_embedded, embed_field, field_path} ->
-        embed_atom = String.to_existing_atom(embed_field)
-        apply_operator_to_nested_embedded(query, embed_atom, field_path, value, operator, opts)
+        {:embedded, embed_field, field_name} ->
+          with {:ok, embed_atom} <- existing_atom(embed_field),
+               {:ok, field_atom} <- existing_atom(field_name) do
+            apply_operator_to_embedded(query, embed_atom, field_atom, value, operator, opts)
+          end
 
-      {:relationship_embedded, rel_path, embed_field, field_name} ->
-        rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
-        embed_atom = String.to_existing_atom(embed_field)
-        field_atom = String.to_existing_atom(field_name)
+        {:nested_embedded, embed_field, field_path} ->
+          with {:ok, embed_atom} <- existing_atom(embed_field) do
+            apply_operator_to_nested_embedded(
+              query,
+              embed_atom,
+              field_path,
+              value,
+              operator,
+              opts
+            )
+          end
 
-        apply_operator_to_relationship_embedded(
-          query,
-          rel_path_atoms,
-          embed_atom,
-          field_atom,
-          value,
-          operator,
-          opts
-        )
+        {:relationship_embedded, rel_path, embed_field, field_name} ->
+          with {:ok, embed_atom} <- existing_atom(embed_field),
+               {:ok, field_atom} <- existing_atom(field_name) do
+            rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
 
-      {:relationship_nested_embedded, rel_path, embed_field, field_path} ->
-        rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
-        embed_atom = String.to_existing_atom(embed_field)
+            apply_operator_to_relationship_embedded(
+              query,
+              rel_path_atoms,
+              embed_atom,
+              field_atom,
+              value,
+              operator,
+              opts
+            )
+          end
 
-        apply_operator_to_relationship_nested_embedded(
-          query,
-          rel_path_atoms,
-          embed_atom,
-          field_path,
-          value,
-          operator,
-          opts
-        )
+        {:relationship_nested_embedded, rel_path, embed_field, field_path} ->
+          with {:ok, embed_atom} <- existing_atom(embed_field) do
+            rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
 
-      {:invalid, _} ->
-        # Return query unchanged for invalid field notation
-        query
+            apply_operator_to_relationship_nested_embedded(
+              query,
+              rel_path_atoms,
+              embed_atom,
+              field_path,
+              value,
+              operator,
+              opts
+            )
+          end
+
+        {:invalid, _} ->
+          # Return query unchanged for invalid field notation
+          query
+      end
+
+    case result do
+      {:error, :unknown_field} -> query
+      other -> other
     end
+  end
+
+  defp existing_atom(value) do
+    {:ok, String.to_existing_atom(value)}
+  rescue
+    ArgumentError -> {:error, :unknown_field}
   end
 
   defp apply_operator_to_relationship(query, rel_path, field_atom, value, operator, opts) do

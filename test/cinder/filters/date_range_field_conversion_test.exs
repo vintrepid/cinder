@@ -15,6 +15,10 @@ defmodule Cinder.Filters.DateRangeFieldConversionTest do
       attribute(:birth_date, :date)
       attribute(:name, :string)
     end
+
+    actions do
+      defaults([:read])
+    end
   end
 
   describe "NaiveDatetime field conversion" do

@@ -108,7 +108,7 @@ defmodule Cinder.Renderers.Table do
               </td>
             </tr>
             <!-- Empty State (CSS :only-child shows when stream is empty) -->
-            <tr id={"#{@id}-empty"} class="only:table-row hidden">
+            <tr :if={not @loading and not @error} id={"#{@id}-empty"} class="only:table-row hidden">
               <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="empty_class">
                 <%= if has_slot?(assigns, :empty_slot) do %>
                   {render_slot(@empty_slot, empty_context(assigns))}
@@ -118,7 +118,8 @@ defmodule Cinder.Renderers.Table do
               </td>
             </tr>
             <!-- Stream rows: only changed items are patched -->
-            <tr :for={{dom_id, item} <- @streams.data}
+            <tr :for={{dom_id, item} <- table_rows(assigns)}
+                :if={not @error}
                 id={dom_id}
                 class={get_row_classes(@theme.row_class, @row_click, @selectable, @selected_ids, item, @id_field, @theme)}
                 data-item-id={to_string(Map.get(item, @id_field))}
@@ -170,6 +171,17 @@ defmodule Cinder.Renderers.Table do
       />
     </div>
     """
+  end
+
+  defp table_rows(%{streams: %{data: data}}), do: data
+
+  defp table_rows(assigns) do
+    id = Map.get(assigns, :id, "cinder-table")
+    id_field = Map.get(assigns, :id_field, :id)
+
+    assigns
+    |> Map.get(:data, [])
+    |> Enum.map(fn item -> {"#{id}-#{Map.get(item, id_field)}", item} end)
   end
 
   # ============================================================================

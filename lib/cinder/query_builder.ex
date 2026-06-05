@@ -27,8 +27,60 @@ defmodule Cinder.QueryBuilder do
           | {:max_concurrency, pos_integer()}
         ]
 
+  @doc false
+  # Builds a query with filters, sorting, and action applied, but does not execute it.
+  # Returns `{:ok, prepared_query}` or `{:error, reason}`. Internal helper used
+  # by `build_and_execute/2` and the LiveComponent's on_query_change path to
+  # capture the pre-pagination query for notification to parent LiveViews.
+  def build_query(resource_or_query, options) do
+    filters = Keyword.get(options, :filters, %{})
+    sort_by = Keyword.get(options, :sort_by, [])
+    columns = Keyword.get(options, :columns, [])
+    query_opts = Keyword.get(options, :query_opts, [])
+    search_term = Keyword.get(options, :search_term, "")
+    search_fn = Keyword.get(options, :search_fn)
+
+    try do
+      base_query = Ash.Query.new(resource_or_query)
+      resource = base_query.resource
+
+      case validate_sortable_fields(sort_by, resource) do
+        :ok ->
+          prepared_query =
+            base_query
+            |> apply_filters(filters, columns)
+            |> apply_search(search_term, columns, search_fn)
+            |> apply_sorting(sort_by)
+            |> apply_action(options)
+
+          {:ok, prepared_query}
+
+        {:error, _message} = error ->
+          error
+      end
+    rescue
+      error ->
+        resource = extract_resource_for_logging(resource_or_query)
+
+        Logger.error(
+          "Cinder query building crashed with exception for #{inspect(resource)}: #{inspect(error)}",
+          %{
+            resource: resource,
+            filters: filters,
+            sort_by: sort_by,
+            query_opts: query_opts,
+            tenant: Keyword.get(options, :tenant),
+            exception: inspect(error),
+            stacktrace: Exception.format_stacktrace(__STACKTRACE__)
+          }
+        )
+
+        {:error, error}
+    end
+  end
+
   @doc """
-  Builds a complete query with filters, sorting, and pagination.
+  Builds a complete query with filters, sorting, and pagination, then executes it.
 
   ## Parameters
   - `resource_or_query`: The Ash resource to query or a pre-built Ash.Query
@@ -56,6 +108,7 @@ defmodule Cinder.QueryBuilder do
   - `:timeout` - Query timeout in milliseconds or `:infinity` (e.g., `:timer.seconds(30)`)
   - `:authorize?` - Whether to run authorization during query execution
   - `:max_concurrency` - Maximum number of processes for parallel loading
+  - `:tracer` - Tracer module(s) to use for the query (see `Ash.Tracer`)
 
   ### Usage Examples
 
@@ -90,25 +143,30 @@ defmodule Cinder.QueryBuilder do
   not match non-paginated results. Use `page.results` for consistent access.
   """
   def build_and_execute(resource_or_query, options) do
-    explicit_actor = Keyword.fetch!(options, :actor)
-    explicit_tenant = Keyword.get(options, :tenant)
-    scope = Keyword.get(options, :scope)
-    scope_opts = extract_scope_options(scope)
+    case build_query(resource_or_query, options) do
+      {:ok, prepared_query} ->
+        execute(prepared_query, options)
 
-    # Explicit actor/tenant override scope values
-    actor = explicit_actor || scope_opts[:actor]
-    tenant = explicit_tenant || scope_opts[:tenant]
-    filters = Keyword.get(options, :filters, %{})
-    sort_by = Keyword.get(options, :sort_by, [])
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc false
+  # Executes an already-built query with pagination. Internal helper so the
+  # LiveComponent can build the query once (for on_query_change notification)
+  # and then execute it without rebuilding.
+  #
+  # Auth opts (`scope:` / `actor:` / `tenant:`) are passed straight to
+  # `Ash.read` — Ash handles precedence between opts and what's already on
+  # the query (per `Ash.Actions.Helpers.set_context_and_get_opts`).
+  def execute(%Ash.Query{} = prepared_query, options) do
     raw_page_size = Keyword.get(options, :page_size, 25)
     # Strip negative page sizes - use default instead
     page_size = if raw_page_size > 0, do: raw_page_size, else: 25
     current_page = Keyword.get(options, :current_page, 1)
-    columns = Keyword.get(options, :columns, [])
     query_opts = Keyword.get(options, :query_opts, [])
-    search_term = Keyword.get(options, :search_term, "")
-    search_fn = Keyword.get(options, :search_fn)
-    action = Keyword.get(options, :action)
+    ash_opts = build_read_opts(options)
 
     # Keyset pagination options
     pagination_mode = Keyword.get(options, :pagination_mode, :offset)
@@ -116,99 +174,44 @@ defmodule Cinder.QueryBuilder do
     before_keyset = Keyword.get(options, :before_keyset)
 
     try do
-      # Query actor/tenant as final fallback
-      effective_actor =
-        actor ||
-          if is_struct(resource_or_query, Ash.Query),
-            do: get_in(resource_or_query.context, [:private, :actor])
-
-      effective_tenant =
-        tenant || if is_struct(resource_or_query, Ash.Query), do: resource_or_query.tenant
-
-      base_query = Ash.Query.new(resource_or_query)
-      resource = base_query.resource
-
-      # Validate sort fields before applying them to prevent crashes
-      case validate_sortable_fields(sort_by, resource) do
-        :ok ->
-          # Continue with normal query building
-          prepared_query =
-            base_query
-            |> apply_filters(filters, columns)
-            |> apply_search(search_term, columns, search_fn)
-            |> apply_sorting(sort_by)
-            |> apply_action(action, actor, tenant, scope_opts, query_opts)
-
-          # Handle pagination based on action support
-          case action_supports_pagination?(prepared_query) do
-            true ->
-              case pagination_mode do
-                :keyset ->
-                  execute_with_keyset_pagination(
-                    prepared_query,
-                    effective_actor,
-                    effective_tenant,
-                    scope_opts,
-                    query_opts,
-                    page_size,
-                    after_keyset,
-                    before_keyset
-                  )
-
-                :offset ->
-                  execute_with_pagination(
-                    prepared_query,
-                    effective_actor,
-                    effective_tenant,
-                    scope_opts,
-                    query_opts,
-                    current_page,
-                    page_size
-                  )
-              end
-
-            false ->
-              # Check if user has configured pagination but action doesn't support it
-              if Keyword.get(options, :pagination_configured, false) do
-                require Logger
-
-                Logger.warning(
-                  "Table configured with page_size but action #{inspect(prepared_query.action.name)} doesn't support pagination. " <>
-                    "All records will be loaded into memory. Add 'pagination do ... end' to your action: " <>
-                    "https://hexdocs.pm/ash/pagination.html"
-                )
-              end
-
-              execute_without_pagination(
+      case action_supports_pagination?(prepared_query) do
+        true ->
+          case pagination_mode do
+            :keyset ->
+              execute_with_keyset_pagination(
                 prepared_query,
-                effective_actor,
-                effective_tenant,
-                scope_opts,
-                query_opts,
-                current_page,
-                page_size
+                ash_opts,
+                page_size,
+                after_keyset,
+                before_keyset
               )
+
+            :offset ->
+              execute_with_pagination(prepared_query, ash_opts, current_page, page_size)
           end
 
-        {:error, message} ->
-          # Return validation error instead of crashing
-          {:error, message}
+        false ->
+          # Check if user has configured pagination but action doesn't support it
+          if Keyword.get(options, :pagination_configured, false) do
+            Logger.warning(
+              "Table configured with page_size but action #{inspect(prepared_query.action.name)} doesn't support pagination. " <>
+                "All records will be loaded into memory. Add 'pagination do ... end' to your action: " <>
+                "https://hexdocs.pm/ash/pagination.html"
+            )
+          end
+
+          execute_without_pagination(prepared_query, ash_opts)
       end
     rescue
       error ->
-        # Log exceptions (like calculation errors) with full context
-        resource = extract_resource_for_logging(resource_or_query)
-
         Logger.error(
-          "Cinder table query crashed with exception for #{inspect(resource)}: #{inspect(error)}",
+          "Cinder table query crashed with exception for #{inspect(prepared_query.resource)}: #{inspect(error)}",
           %{
-            resource: resource,
-            filters: filters,
-            sort_by: sort_by,
+            resource: prepared_query.resource,
             current_page: current_page,
             page_size: page_size,
             query_opts: query_opts,
-            tenant: tenant,
+            tenant: Keyword.get(options, :tenant),
             exception: inspect(error),
             stacktrace: Exception.format_stacktrace(__STACKTRACE__)
           }
@@ -218,47 +221,39 @@ defmodule Cinder.QueryBuilder do
     end
   end
 
-  # Ensure resource has an action set
-  defp apply_action(query, action, actor, tenant, scope_opts, query_opts) do
-    query
-    |> maybe_set_tenant(tenant)
-    |> maybe_set_actor(actor)
-    |> apply_query_opts(query_opts)
-    |> then(fn query ->
-      cond do
-        query.action ->
-          query
+  # Prepare the query for execution by ensuring it has an action set.
+  #
+  # If the caller supplied an already-prepared `Ash.Query` (`query.action != nil`),
+  # we leave its auth setup alone — explicit `actor:` / `tenant:` / `scope:`
+  # from options still take effect, but only via the opts handed to `Ash.read`
+  # at execution time. The query struct itself is not mutated.
+  #
+  # If the query is unprepared, we hand `scope:` + explicit `actor:` / `tenant:`
+  # straight to `Ash.Query.for_read` and let Ash apply its documented precedence
+  # (`deps/ash/lib/ash/scope.ex` — explicit wins for actor/tenant/authorize?,
+  # context deep-merges, tracers concatenate).
+  defp apply_action(query, options) do
+    query = apply_query_opts(query, Keyword.get(options, :query_opts, []))
 
-        action ->
-          Ash.Query.for_read(
-            query,
-            action,
-            %{},
-            build_ash_options(actor, tenant, scope_opts, query_opts)
-          )
+    if query.action do
+      maybe_warn_action_mismatch(query, Keyword.get(options, :action))
+      query
+    else
+      action_name =
+        Keyword.get(options, :action) ||
+          Ash.Resource.Info.primary_action!(query.resource, :read).name
 
-        true ->
-          primary_read = Ash.Resource.Info.primary_action!(query.resource, :read)
-
-          Ash.Query.for_read(
-            query,
-            primary_read.name,
-            %{},
-            build_ash_options(actor, tenant, scope_opts, query_opts)
-          )
-      end
-    end)
+      Ash.Query.for_read(query, action_name, %{}, build_for_read_opts(options))
+    end
   end
 
-  defp maybe_set_tenant(query, nil), do: query
-  defp maybe_set_tenant(query, tenant), do: Ash.Query.set_tenant(query, tenant)
+  defp maybe_warn_action_mismatch(_query, nil), do: :ok
+  defp maybe_warn_action_mismatch(%Ash.Query{action: %{name: same}}, same), do: :ok
 
-  defp maybe_set_actor(query, nil), do: query
-
-  defp maybe_set_actor(query, actor) do
-    existing_context = query.context || %{}
-    new_context = Map.put(existing_context, :actor, actor)
-    Ash.Query.set_context(query, new_context)
+  defp maybe_warn_action_mismatch(query, action) do
+    Logger.warning(
+      "Cinder: ignoring explicit `action: #{inspect(action)}` because the supplied query is already prepared for action `#{inspect(query.action.name)}`"
+    )
   end
 
   # Check if the action supports pagination
@@ -274,15 +269,7 @@ defmodule Cinder.QueryBuilder do
   defp action_supports_pagination?(_), do: true
 
   # Execute query with offset pagination (existing behavior)
-  defp execute_with_pagination(
-         query,
-         actor,
-         tenant,
-         scope_opts,
-         query_opts,
-         current_page,
-         page_size
-       ) do
+  defp execute_with_pagination(query, ash_opts, current_page, page_size) do
     paginated_query =
       Ash.Query.page(query,
         limit: page_size,
@@ -290,28 +277,19 @@ defmodule Cinder.QueryBuilder do
         count: true
       )
 
-    case Ash.read(paginated_query, build_ash_options(actor, tenant, scope_opts, query_opts)) do
+    case Ash.read(paginated_query, ash_opts) do
       # We pass offset: so Ash always returns Ash.Page.Offset
       {:ok, %Ash.Page.Offset{} = page} ->
         {:ok, page}
 
       {:error, query_error} ->
-        log_query_error(query.resource, query_error, current_page, page_size, query_opts, tenant)
+        log_query_error(query.resource, query_error, current_page, page_size, ash_opts)
         {:error, query_error}
     end
   end
 
   # Execute query with keyset pagination (cursor-based)
-  defp execute_with_keyset_pagination(
-         query,
-         actor,
-         tenant,
-         scope_opts,
-         query_opts,
-         page_size,
-         after_keyset,
-         before_keyset
-       ) do
+  defp execute_with_keyset_pagination(query, ash_opts, page_size, after_keyset, before_keyset) do
     # Build keyset pagination options
     keyset_opts =
       [limit: page_size, count: true]
@@ -320,7 +298,7 @@ defmodule Cinder.QueryBuilder do
 
     paginated_query = Ash.Query.page(query, keyset_opts)
 
-    case Ash.read(paginated_query, build_ash_options(actor, tenant, scope_opts, query_opts)) do
+    case Ash.read(paginated_query, ash_opts) do
       # Ash returns Offset or Keyset depending on app config and parameters, accept both
       {:ok, %Ash.Page.Keyset{} = page} ->
         {:ok, page}
@@ -329,7 +307,7 @@ defmodule Cinder.QueryBuilder do
         {:ok, page}
 
       {:error, query_error} ->
-        log_query_error(query.resource, query_error, 1, page_size, query_opts, tenant)
+        log_query_error(query.resource, query_error, 1, page_size, ash_opts)
         {:error, query_error}
     end
   end
@@ -338,37 +316,29 @@ defmodule Cinder.QueryBuilder do
   defp maybe_add_keyset_cursor(opts, key, cursor), do: Keyword.put(opts, key, cursor)
 
   # Execute query without pagination and return all results
-  defp execute_without_pagination(
-         query,
-         actor,
-         tenant,
-         scope_opts,
-         query_opts,
-         _current_page,
-         _page_size
-       ) do
-    case Ash.read(query, build_ash_options(actor, tenant, scope_opts, query_opts)) do
+  defp execute_without_pagination(query, ash_opts) do
+    case Ash.read(query, ash_opts) do
       {:ok, results} ->
         # No pagination - return nil (pagination controls won't be shown)
         # Wrap results in a simple struct-like map for consistent access via .results
         {:ok, %{results: results}}
 
       {:error, query_error} ->
-        log_query_error(query.resource, query_error, 1, 0, query_opts, tenant)
+        log_query_error(query.resource, query_error, 1, 0, ash_opts)
         {:error, query_error}
     end
   end
 
   # Helper for consistent error logging
-  defp log_query_error(resource, query_error, current_page, page_size, query_opts, tenant) do
+  defp log_query_error(resource, query_error, current_page, page_size, ash_opts) do
     Logger.error(
       "Cinder table query execution failed for #{inspect(resource)}: #{inspect(query_error)}",
       %{
         resource: resource,
         current_page: current_page,
         page_size: page_size,
-        query_opts: query_opts,
-        tenant: tenant,
+        ash_opts: ash_opts,
+        tenant: Keyword.get(ash_opts, :tenant),
         error: inspect(query_error)
       }
     )
@@ -402,7 +372,15 @@ defmodule Cinder.QueryBuilder do
     end)
   end
 
-  @supported_query_opts [:load, :select, :tenant, :timeout, :authorize?, :max_concurrency]
+  @supported_query_opts [
+    :load,
+    :select,
+    :tenant,
+    :timeout,
+    :authorize?,
+    :max_concurrency,
+    :tracer
+  ]
 
   defp validate_query_opts(opts) do
     unsupported_opts =
@@ -562,7 +540,11 @@ defmodule Cinder.QueryBuilder do
   # Enum-typed columns: match search_term against each allowed atom's name
   # (case-insensitive substring) and emit one `equals` condition per match.
   # The outer combiner ORs all conditions together.
-  defp build_column_search_conditions(query, %{search_match: match, search_enum_values: values} = column, search_term)
+  defp build_column_search_conditions(
+         query,
+         %{search_match: match, search_enum_values: values} = column,
+         search_term
+       )
        when match in [:enum, :enum_array] and is_list(values) and values != [] do
     lowered = String.downcase(search_term)
 
@@ -710,9 +692,6 @@ defmodule Cinder.QueryBuilder do
 
   Provides a predictable three-step cycle:
   - none → ascending → descending → none
-
-  When starting with extracted query sorts, use `toggle_sort_from_query/2`
-  for better UX that handles the transition from query state to user control.
   """
   def toggle_sort_direction(current_sort, key) do
     case Enum.find(current_sort, fn {sort_key, _direction} -> sort_key == key end) do
@@ -808,45 +787,12 @@ defmodule Cinder.QueryBuilder do
   end
 
   defp add_sort(_current_sort, key, direction, :exclusive), do: [{key, direction}]
-  defp add_sort(current_sort, key, direction, :additive), do: current_sort ++ [{key, direction}]
+  defp add_sort(current_sort, key, direction, :additive), do: [{key, direction} | current_sort]
 
   defp remove_sort(_current_sort, _key, :exclusive), do: []
 
   defp remove_sort(current_sort, key, :additive) do
     Enum.reject(current_sort, fn {sort_key, _direction} -> sort_key == key end)
-  end
-
-  @doc """
-  Toggles sort direction with special handling for query-extracted sorts.
-
-  When a column has a sort from query extraction, the first user click
-  provides intuitive behavior:
-  - desc (from query) → asc (user takes control)
-  - asc (from query) → desc (user takes control)
-
-  After first click, follows standard toggle cycle.
-  """
-  def toggle_sort_from_query(current_sort, key) do
-    case Enum.find(current_sort, fn {sort_key, _direction} -> sort_key == key end) do
-      {^key, :asc} ->
-        # Currently ascending, change to descending
-        Enum.map(current_sort, fn
-          {^key, :asc} -> {key, :desc}
-          other -> other
-        end)
-
-      {^key, :desc} ->
-        # Currently descending, flip to ascending (better UX than removing)
-        # This gives users the opposite direction first, then normal cycle
-        Enum.map(current_sort, fn
-          {^key, :desc} -> {key, :asc}
-          other -> other
-        end)
-
-      nil ->
-        # Not currently sorted, add ascending sort
-        [{key, :asc} | current_sort]
-    end
   end
 
   @doc """
@@ -860,24 +806,43 @@ defmodule Cinder.QueryBuilder do
     end
   end
 
-  # Extract options from an Ash scope, returning empty list if scope is nil or invalid
-  defp extract_scope_options(nil), do: []
-
-  defp extract_scope_options(scope) do
-    try do
-      Ash.Scope.to_opts(scope)
-    rescue
-      _ -> []
-    end
+  # Auth options handed to Ash. We pass `scope:` through untouched and let Ash
+  # apply its documented precedence (`deps/ash/lib/ash/scope.ex:43-51`).
+  #
+  # Nil actor/tenant/scope are filtered out *before* reaching Ash. Cinder
+  # collection attrs use nil as "not supplied", so an unset `actor=` prop
+  # arrives here as `nil` — and Ash's literal semantics treat an explicit
+  # `actor: nil` as "erase scope's actor", which would punish the common case
+  # of `scope={@scope}` without `actor=`. Filtering nils preserves the most
+  # common intent. Users who genuinely want to suppress scope's actor can
+  # build a scope that returns `:error` from `get_actor/1`.
+  defp build_auth_opts(options) do
+    []
+    |> maybe_put(:scope, Keyword.get(options, :scope))
+    |> maybe_put(:actor, Keyword.get(options, :actor))
+    |> maybe_put(:tenant, Keyword.get(options, :tenant))
   end
 
-  # Build options for Ash.Query.for_read/3 and Ash.read/2
-  # Scope options provide base, explicit actor/tenant override
-  defp build_ash_options(actor, tenant, scope_opts, query_opts) do
-    scope_opts
-    |> Keyword.put(:actor, actor)
-    |> maybe_add_tenant(tenant)
-    |> maybe_add_ash_options(query_opts)
+  defp maybe_put(opts, _key, nil), do: opts
+  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  # Opts handed to `Ash.Query.for_read/4`. Auth opts plus query_opts that
+  # for_read recognises (see `Ash.Query.for_read_opts/0`).
+  defp build_for_read_opts(options) do
+    query_opts = Keyword.get(options, :query_opts, [])
+
+    options
+    |> build_auth_opts()
+    |> Keyword.merge(Keyword.take(query_opts, [:authorize?, :tracer]))
+  end
+
+  # Opts handed to `Ash.read/2`. Auth opts plus query_opts that affect execution.
+  defp build_read_opts(options) do
+    query_opts = Keyword.get(options, :query_opts, [])
+
+    options
+    |> build_auth_opts()
+    |> Keyword.merge(Keyword.take(query_opts, [:timeout, :authorize?, :max_concurrency, :tracer]))
   end
 
   @doc """
@@ -1491,31 +1456,5 @@ defmodule Cinder.QueryBuilder do
   defp valid_table_sort?({_field, _direction}, _columns) do
     # If no columns provided, assume all sorts are valid
     true
-  end
-
-  # Add tenant to options if provided
-  defp maybe_add_tenant(options, nil), do: options
-  defp maybe_add_tenant(options, tenant), do: Keyword.put(options, :tenant, tenant)
-
-  # Add execution Ash options from query_opts
-  defp maybe_add_ash_options(options, query_opts) do
-    # Extract execution options from query_opts and pass them to both query building and execution
-    # Options like :actor, :tenant are already handled separately
-    # Query building options like :select, :load are handled by apply_query_opts/2
-    execution_options = [
-      # How long to wait for query execution - needed for both phases
-      :timeout,
-      # Whether to run authorization during execution - needed for both phases
-      :authorize?,
-      # For parallel loading during execution
-      :max_concurrency
-    ]
-
-    Enum.reduce(execution_options, options, fn key, acc ->
-      case Keyword.get(query_opts, key) do
-        nil -> acc
-        value -> Keyword.put(acc, key, value)
-      end
-    end)
   end
 end

@@ -19,7 +19,7 @@ defmodule Cinder.LiveComponent do
 
   @impl true
   def mount(socket) do
-    {:ok, stream(socket, :data, [])}
+    {:ok, maybe_stream(socket, :data, [])}
   end
 
   @impl true
@@ -52,7 +52,7 @@ defmodule Cinder.LiveComponent do
     changed_item = Enum.find(updated_data, fn item -> Map.get(item, id_field) == id end)
 
     socket = assign(socket, :data, updated_data)
-    socket = if changed_item, do: stream_insert(socket, :data, changed_item), else: socket
+    socket = if changed_item, do: maybe_stream_insert(socket, :data, changed_item), else: socket
     {:ok, socket}
   end
 
@@ -69,7 +69,10 @@ defmodule Cinder.LiveComponent do
     changed_items = Enum.filter(updated_data, fn item -> Map.get(item, id_field) in id_set end)
 
     socket = assign(socket, :data, updated_data)
-    socket = Enum.reduce(changed_items, socket, fn item, acc -> stream_insert(acc, :data, item) end)
+
+    socket =
+      Enum.reduce(changed_items, socket, fn item, acc -> maybe_stream_insert(acc, :data, item) end)
+
     {:ok, socket}
   end
 
@@ -132,7 +135,7 @@ defmodule Cinder.LiveComponent do
         updated = update_fn.(input)
         updated_data = Enum.map(data, &if(Map.get(&1, id_field) == id, do: updated, else: &1))
         socket = assign(socket, :data, updated_data)
-        {:ok, stream_insert(socket, :data, updated)}
+        {:ok, maybe_stream_insert(socket, :data, updated)}
     end
   end
 
@@ -161,7 +164,12 @@ defmodule Cinder.LiveComponent do
 
       # Sync only changed items to the stream
       socket = assign(socket, :data, updated_data)
-      socket = Enum.reduce(Map.values(updated_by_id), socket, fn item, acc -> stream_insert(acc, :data, item) end)
+
+      socket =
+        Enum.reduce(Map.values(updated_by_id), socket, fn item, acc ->
+          maybe_stream_insert(acc, :data, item)
+        end)
+
       {:ok, socket}
     end
   end
@@ -194,19 +202,17 @@ defmodule Cinder.LiveComponent do
 
   @impl true
   def handle_event("goto_page", %{"page" => page}, socket) do
-    # Only works in offset pagination mode
-    if socket.assigns.pagination_mode == :offset do
-      page = String.to_integer(page)
-
+    with :offset <- socket.assigns.pagination_mode,
+         {parsed, ""} when parsed > 0 <- Integer.parse(to_string(page)) do
       socket =
         socket
-        |> assign(:current_page, page)
+        |> assign(:current_page, parsed)
         |> notify_state_change()
         |> load_data()
 
       {:noreply, socket}
     else
-      {:noreply, socket}
+      _ -> {:noreply, socket}
     end
   end
 
@@ -246,21 +252,26 @@ defmodule Cinder.LiveComponent do
 
   @impl true
   def handle_event("change_page_size", %{"page_size" => page_size}, socket) do
-    page_size = String.to_integer(page_size)
-    updated_config = %{socket.assigns.page_size_config | selected_page_size: page_size}
+    with {parsed, ""} <- Integer.parse(to_string(page_size)),
+         validated when validated == parsed <-
+           Cinder.PageSize.validate(parsed, socket.assigns.page_size_config) do
+      updated_config = %{socket.assigns.page_size_config | selected_page_size: validated}
 
-    socket =
-      socket
-      |> assign(:page_size, page_size)
-      |> assign(:page_size_config, updated_config)
-      |> assign(:current_page, 1)
-      # Clear keyset cursors to restart from beginning when page size changes
-      |> assign(:after_keyset, nil)
-      |> assign(:before_keyset, nil)
-      |> notify_state_change()
-      |> load_data()
+      socket =
+        socket
+        |> assign(:page_size, validated)
+        |> assign(:page_size_config, updated_config)
+        |> assign(:current_page, 1)
+        # Clear keyset cursors to restart from beginning when page size changes
+        |> assign(:after_keyset, nil)
+        |> assign(:before_keyset, nil)
+        |> notify_state_change()
+        |> load_data()
 
-    {:noreply, socket}
+      {:noreply, socket}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   @impl true
@@ -449,31 +460,6 @@ defmodule Cinder.LiveComponent do
     {:noreply, socket}
   end
 
-  # Selection state lives in `:selected_ids` (a non-stream assign), but
-  # the row checkboxes are inside `phx-update="stream"`. LiveView only
-  # re-renders streamed items when they're explicitly re-streamed, so
-  # without these re-stream helpers the `checked` attribute stays stale
-  # after select/select-all/clear actions.
-
-  defp restream_all_rows(socket) do
-    stream(socket, :data, socket.assigns.data, reset: true)
-  end
-
-  defp restream_affected(socket, id) do
-    id_field = socket.assigns[:id_field] || :id
-
-    case Enum.find(socket.assigns.data, fn item ->
-           to_string(Map.get(item, id_field)) == to_string(id)
-         end) do
-      nil -> socket
-      item -> stream_insert(socket, :data, item)
-    end
-  end
-
-  # ============================================================================
-  # BULK ACTION EVENT HANDLERS
-  # ============================================================================
-
   @impl true
   def handle_event("bulk_action_execute", %{"index" => index}, socket) do
     slots = socket.assigns[:bulk_action_slots] || []
@@ -537,6 +523,31 @@ defmodule Cinder.LiveComponent do
     {:noreply, socket}
   end
 
+  # Selection state lives in `:selected_ids` (a non-stream assign), but
+  # the row checkboxes are inside `phx-update="stream"`. LiveView only
+  # re-renders streamed items when they're explicitly re-streamed, so
+  # without these re-stream helpers the `checked` attribute stays stale
+  # after select/select-all/clear actions.
+
+  defp restream_all_rows(socket) do
+    maybe_stream(socket, :data, socket.assigns.data, reset: true)
+  end
+
+  defp restream_affected(socket, id) do
+    id_field = socket.assigns[:id_field] || :id
+
+    if has_streams?(socket) do
+      case Enum.find(socket.assigns.data, fn item ->
+             to_string(Map.get(item, id_field)) == to_string(id)
+           end) do
+        nil -> socket
+        item -> maybe_stream_insert(socket, :data, item)
+      end
+    else
+      socket
+    end
+  end
+
   # ============================================================================
   # BULK ACTION HELPERS
   # ============================================================================
@@ -558,6 +569,7 @@ defmodule Cinder.LiveComponent do
             id_field: socket.assigns[:id_field] || :id,
             actor: socket.assigns[:actor],
             tenant: socket.assigns[:tenant],
+            scope: socket.assigns[:scope],
             action_opts: slot[:action_opts] || []
           )
 
@@ -630,6 +642,16 @@ defmodule Cinder.LiveComponent do
     end
   end
 
+  defp maybe_notify_query_change(socket, nil), do: socket
+
+  defp maybe_notify_query_change(socket, query) do
+    if event_name = socket.assigns[:on_query_change] do
+      send(self(), {event_name, %{query: query, id: socket.assigns.id}})
+    end
+
+    socket
+  end
+
   defp notify_selection_change(socket, action) do
     if event_name = socket.assigns[:on_selection_change] do
       payload = %{
@@ -649,23 +671,37 @@ defmodule Cinder.LiveComponent do
   # ASYNC HANDLERS
   # ============================================================================
 
-  @impl true
-  def handle_async(:load_data, {:ok, {:ok, page}}, socket) do
+  def handle_async(:load_data, {:ok, {{:ok, page}, query}}, socket) do
     socket =
-      socket
-      |> assign(:loading, false)
-      |> assign(:error, false)
-      |> assign(:data, page.results)
-      |> stream(:data, page.results, reset: true)
-      |> assign(:page, page)
-      # Update keyset cursors for navigation (only relevant in keyset mode)
-      |> maybe_update_keyset_cursors(page)
+      {:ok, page}
+      |> handle_result(socket)
+      |> maybe_notify_query_change(query)
 
     {:noreply, socket}
   end
 
   @impl true
-  def handle_async(:load_data, {:ok, {:error, error}}, socket) do
+  def handle_async(:load_data, {:ok, {{:error, error}, _query}}, socket) do
+    {:noreply, handle_result({:error, error}, socket)}
+  end
+
+  @impl true
+  def handle_async(:load_data, {:exit, reason}, socket) do
+    {:noreply, handle_result({:exit, reason}, socket)}
+  end
+
+  defp handle_result({:ok, page}, socket) do
+    socket
+    |> assign(:loading, false)
+    |> assign(:error, false)
+    |> assign(:data, page.results)
+    |> maybe_stream(:data, page.results, reset: true)
+    |> assign(:page, page)
+    # Update keyset cursors for navigation (only relevant in keyset mode)
+    |> maybe_update_keyset_cursors(page)
+  end
+
+  defp handle_result({:error, error}, socket) do
     Logger.error(
       "Cinder query failed for #{inspect(socket.assigns.query)}: #{inspect(error)}",
       %{
@@ -677,19 +713,15 @@ defmodule Cinder.LiveComponent do
       }
     )
 
-    socket =
-      socket
-      |> assign(:loading, false)
-      |> assign(:error, true)
-      |> assign(:data, [])
-      |> stream(:data, [], reset: true)
-      |> assign(:page, nil)
-
-    {:noreply, socket}
+    socket
+    |> assign(:loading, false)
+    |> assign(:error, true)
+    |> assign(:data, [])
+    |> maybe_stream(:data, [], reset: true)
+    |> assign(:page, nil)
   end
 
-  @impl true
-  def handle_async(:load_data, {:exit, reason}, socket) do
+  defp handle_result({:exit, reason}, socket) do
     Logger.error(
       "Cinder query crashed for #{inspect(socket.assigns.query)}: #{inspect(reason)}",
       %{
@@ -701,15 +733,12 @@ defmodule Cinder.LiveComponent do
       }
     )
 
-    socket =
-      socket
-      |> assign(:loading, false)
-      |> assign(:error, true)
-      |> assign(:data, [])
-      |> stream(:data, [], reset: true)
-      |> assign(:page, nil)
-
-    {:noreply, socket}
+    socket
+    |> assign(:loading, false)
+    |> assign(:error, true)
+    |> assign(:data, [])
+    |> maybe_stream(:data, [], reset: true)
+    |> assign(:page, nil)
   end
 
   defp maybe_update_keyset_cursors(socket, %Ash.Page.Keyset{} = page) do
@@ -819,13 +848,16 @@ defmodule Cinder.LiveComponent do
 
       updated_socket =
         if Map.has_key?(raw_params, "page_size") do
+          validated_page_size =
+            Cinder.PageSize.validate(decoded_state.page_size, socket.assigns.page_size_config)
+
           updated_page_size_config = %{
             socket.assigns.page_size_config
-            | selected_page_size: decoded_state.page_size
+            | selected_page_size: validated_page_size
           }
 
           socket
-          |> assign(:page_size, decoded_state.page_size)
+          |> assign(:page_size, validated_page_size)
           |> assign(:page_size_config, updated_page_size_config)
         else
           socket
@@ -848,7 +880,7 @@ defmodule Cinder.LiveComponent do
       |> assign(:search_term, decoded_state.search_term)
       |> assign(:show_all?, show_all?)
     else
-      decode_url_state_legacy(socket, assigns)
+      socket
     end
   end
 
@@ -865,45 +897,6 @@ defmodule Cinder.LiveComponent do
 
   defp maybe_assign_cursor(socket, _key, nil), do: socket
   defp maybe_assign_cursor(socket, key, cursor), do: assign(socket, key, cursor)
-
-  defp decode_url_state_legacy(socket, assigns) do
-    url_params =
-      %{
-        "page" => Map.get(assigns, :url_page),
-        "sort" => Map.get(assigns, :url_sort)
-      }
-      |> Map.merge(Map.get(assigns, :url_filters, %{}))
-      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-      |> Enum.into(%{})
-
-    if Enum.empty?(url_params) do
-      socket
-    else
-      decoded_state =
-        Cinder.UrlManager.decode_state(
-          url_params,
-          socket.assigns.columns
-        )
-
-      final_sort_by =
-        cond do
-          decoded_state.sort_by != [] ->
-            decoded_state.sort_by
-
-          Map.get(socket.assigns, :user_has_interacted, false) ->
-            []
-
-          true ->
-            socket.assigns.sort_by
-        end
-
-      socket
-      |> assign(:filters, decoded_state.filters)
-      |> assign(:current_page, decoded_state.current_page)
-      |> assign(:sort_by, final_sort_by)
-      |> assign(:search_term, decoded_state.search_term)
-    end
-  end
 
   # ============================================================================
   # PRIVATE FUNCTIONS - Initialization
@@ -932,7 +925,7 @@ defmodule Cinder.LiveComponent do
     |> assign(:loading, false)
     |> assign(:error, assigns[:error] || false)
     |> assign(:data, assigns[:data] || [])
-    |> stream(:data, assigns[:data] || [], reset: true)
+    |> maybe_stream(:data, assigns[:data] || [], reset: true)
     |> assign(:sort_by, assigns[:sort_by] || extract_initial_sorts(assigns))
     |> assign(:filters, assigns[:filters] || %{})
     |> assign(:search_term, assigns[:search_term] || "")
@@ -951,6 +944,7 @@ defmodule Cinder.LiveComponent do
     |> assign(:selectable, assigns[:selectable] || false)
     |> assign_new(:selected_ids, fn -> MapSet.new() end)
     |> assign(:on_selection_change, assigns[:on_selection_change])
+    |> assign(:on_query_change, assigns[:on_query_change])
     |> assign(:id_field, assigns[:id_field] || :id)
     |> assign(:sort_mode, assigns[:sort_mode] || :exclusive)
     # Bulk actions
@@ -960,6 +954,27 @@ defmodule Cinder.LiveComponent do
     |> assign_new(:show_all?, fn -> false end)
     |> assign_new(:persist_key, fn -> nil end)
     |> assign_new(:persist_scope, fn -> nil end)
+  end
+
+  defp maybe_stream(socket, name, items, opts \\ []) do
+    if live_socket?(socket) do
+      stream(socket, name, items, opts)
+    else
+      socket
+    end
+  end
+
+  defp has_streams?(socket), do: Map.has_key?(socket.assigns, :streams)
+
+  defp live_socket?(%{private: private}), do: Map.has_key?(private, :lifecycle)
+  defp live_socket?(_), do: false
+
+  defp maybe_stream_insert(socket, name, item) do
+    if has_streams?(socket) do
+      stream_insert(socket, name, item)
+    else
+      socket
+    end
   end
 
   defp assign_column_definitions(socket) do
@@ -1119,8 +1134,36 @@ defmodule Cinder.LiveComponent do
     socket
     |> assign(:loading, true)
     |> assign(:error, false)
-    |> start_async(:load_data, fn ->
-      Cinder.QueryBuilder.build_and_execute(resource_var, options)
+    |> then(fn socket ->
+      # Build the query once so we can both execute it and hand it to the
+      # on_query_change callback (if one is configured). maybe_notify_query_change/2
+      # decides whether to actually notify.
+      if Application.get_env(:ash, :disable_async?) do
+        try do
+          case Cinder.QueryBuilder.build_query(resource_var, options) do
+            {:ok, prepared_query} ->
+              prepared_query
+              |> Cinder.QueryBuilder.execute(options)
+              |> handle_result(socket)
+              |> maybe_notify_query_change(prepared_query)
+
+            {:error, _} = error ->
+              handle_result(error, socket)
+          end
+        rescue
+          e -> handle_result({:exit, e}, socket)
+        end
+      else
+        start_async(socket, :load_data, fn ->
+          case Cinder.QueryBuilder.build_query(resource_var, options) do
+            {:ok, prepared_query} ->
+              {Cinder.QueryBuilder.execute(prepared_query, options), prepared_query}
+
+            {:error, _} = error ->
+              {error, nil}
+          end
+        end)
+      end
     end)
   end
 end

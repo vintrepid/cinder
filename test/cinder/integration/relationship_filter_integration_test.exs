@@ -25,6 +25,10 @@ defmodule Cinder.RelationshipFilterIntegrationTest do
       attribute(:employee_count, :integer)
       attribute(:annual_revenue, :decimal)
     end
+
+    actions do
+      defaults([:read])
+    end
   end
 
   defmodule User do
@@ -44,6 +48,10 @@ defmodule Cinder.RelationshipFilterIntegrationTest do
     relationships do
       belongs_to(:company, Company, destination_attribute: :id, source_attribute: :company_id)
     end
+
+    actions do
+      defaults([:read])
+    end
   end
 
   defmodule ProjectAssignment do
@@ -59,6 +67,10 @@ defmodule Cinder.RelationshipFilterIntegrationTest do
 
     relationships do
       belongs_to(:user, User, destination_attribute: :id, source_attribute: :user_id)
+    end
+
+    actions do
+      defaults([:read])
     end
   end
 

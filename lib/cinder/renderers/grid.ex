@@ -85,7 +85,7 @@ defmodule Cinder.Renderers.Grid do
       <!-- Grid Items Container (stream-backed) -->
       <div id={"#{@id}-stream"} phx-update="stream" class={@grid_container_class} data-key="grid_container_class">
         <!-- Empty State (CSS :only-child shows when stream is empty) -->
-        <div id={"#{@id}-empty"} class={["only:block hidden", @theme.empty_class, "col-span-full"]} data-key="empty_class">
+        <div :if={not @loading and not @error} id={"#{@id}-empty"} class={["only:block hidden", @theme.empty_class, "col-span-full"]} data-key="empty_class">
           <%= if has_slot?(assigns, :empty_slot) do %>
             {render_slot(@empty_slot, empty_context(assigns))}
           <% else %>
@@ -102,9 +102,9 @@ defmodule Cinder.Renderers.Grid do
             </div>
           <% end %>
         </div>
-        <%= if @has_item_slot do %>
+        <%= if @has_item_slot and not @error do %>
           <div
-            :for={{dom_id, item} <- @streams.data}
+            :for={{dom_id, item} <- grid_rows(assigns)}
             id={dom_id}
             class={get_item_classes_with_selection(@grid_item_class, Map.get(assigns, :selectable, false), Map.get(assigns, :selected_ids, MapSet.new()), item, Map.get(assigns, :id_field, :id), @item_click, @theme)}
             data-key={@grid_item_data_key}
@@ -162,6 +162,17 @@ defmodule Cinder.Renderers.Grid do
       />
     </div>
     """
+  end
+
+  defp grid_rows(%{streams: %{data: data}}), do: data
+
+  defp grid_rows(assigns) do
+    id = Map.get(assigns, :id, "cinder-grid")
+    id_field = Map.get(assigns, :id_field, :id)
+
+    assigns
+    |> Map.get(:data, [])
+    |> Enum.map(fn item -> {"#{id}-#{Map.get(item, id_field)}", item} end)
   end
 
   # ============================================================================

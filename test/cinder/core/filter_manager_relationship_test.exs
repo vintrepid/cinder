@@ -19,6 +19,10 @@ defmodule Cinder.FilterManagerRelationshipTest do
       attribute(:active, :boolean)
       attribute(:employee_count, :integer)
     end
+
+    actions do
+      defaults([:read])
+    end
   end
 
   defmodule TestUser do
@@ -36,6 +40,10 @@ defmodule Cinder.FilterManagerRelationshipTest do
     relationships do
       belongs_to(:company, TestCompany, destination_attribute: :id, source_attribute: :company_id)
     end
+
+    actions do
+      defaults([:read])
+    end
   end
 
   defmodule TestOrganizationMembership do
@@ -50,6 +58,10 @@ defmodule Cinder.FilterManagerRelationshipTest do
 
     relationships do
       belongs_to(:user, TestUser, destination_attribute: :id, source_attribute: :user_id)
+    end
+
+    actions do
+      defaults([:read])
     end
   end
 

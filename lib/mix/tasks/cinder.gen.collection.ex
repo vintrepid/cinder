@@ -1,5 +1,7 @@
 if Code.ensure_loaded?(Igniter) do
   defmodule Mix.Tasks.Cinder.Gen.Collection do
+    @compile {:no_warn_undefined, [{MaestroTool.HEExParser, :parse, 1}]}
+
     @example """
     mix cinder.gen.collection MyAppWeb.UsersLive MyApp.Accounts.User
     mix cinder.gen.collection MyAppWeb.UsersLive MyApp.Accounts.User --bulk-actions approve,destroy
@@ -180,7 +182,9 @@ if Code.ensure_loaded?(Igniter) do
       """
     end
 
-    defp let_var_for(resource), do: resource |> Module.split() |> List.last() |> Macro.underscore()
+    defp let_var_for(resource),
+      do: resource |> Module.split() |> List.last() |> Macro.underscore()
+
     defp table_id(resource), do: let_var_for(resource) <> "-table"
 
     defp humanize(name) when is_atom(name) do
@@ -199,7 +203,14 @@ if Code.ensure_loaded?(Igniter) do
     defp filter_attr(_), do: ""
 
     defp sortable?(%{type: type}) do
-      type in [Ash.Type.String, Ash.Type.Integer, Ash.Type.Atom, Ash.Type.DateTime, Ash.Type.UtcDatetimeUsec, Ash.Type.Date]
+      type in [
+        Ash.Type.String,
+        Ash.Type.Integer,
+        Ash.Type.Atom,
+        Ash.Type.DateTime,
+        Ash.Type.UtcDatetimeUsec,
+        Ash.Type.Date
+      ]
     end
 
     # Validates we produced parseable HEEx. No regex; uses the LV
@@ -242,7 +253,10 @@ if Code.ensure_loaded?(Igniter) do
 
     defp web_module_for(lv_module) do
       [base | _] = Module.split(lv_module)
-      if String.ends_with?(base, "Web"), do: Module.concat([base]), else: Module.concat([base <> "Web"])
+
+      if String.ends_with?(base, "Web"),
+        do: Module.concat([base]),
+        else: Module.concat([base <> "Web"])
     end
 
     defp new_module_body(web_module, resource, template) do

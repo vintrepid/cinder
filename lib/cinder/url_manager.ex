@@ -176,9 +176,19 @@ defmodule Cinder.UrlManager do
             to_string(filter.value)
         end
 
-      {String.to_existing_atom(key), encoded_value}
+      {encode_filter_key(key), encoded_value}
     end)
     |> Enum.into(%{})
+  end
+
+  defp encode_filter_key(key) when is_atom(key), do: key
+
+  defp encode_filter_key(key) when is_binary(key) do
+    if String.contains?(key, [".", "["]) do
+      key
+    else
+      String.to_existing_atom(key)
+    end
   end
 
   @doc """
@@ -321,7 +331,6 @@ defmodule Cinder.UrlManager do
   end
 
   def decode_sort(nil), do: []
-  def decode_sort(""), do: []
 
   # Helper function to parse sort string into {field, direction} tuples
   defp parse_sort_string(url_sort) do

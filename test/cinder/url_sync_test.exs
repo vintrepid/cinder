@@ -209,7 +209,7 @@ defmodule Cinder.UrlSyncTest do
       # This would normally call push_patch, but we can test that it doesn't crash
       # and would use the proper path from the stored URI
       try do
-        UrlSync.update_url(socket, encoded_state, socket.assigns.table_current_uri)
+        apply(UrlSync, :update_url, [socket, encoded_state, socket.assigns.table_current_uri])
       rescue
         # Expected to fail due to push_patch not working with mock socket
         FunctionClauseError -> :ok
@@ -253,7 +253,7 @@ defmodule Cinder.UrlSyncTest do
 
       # When current_uri is nil AND socket has no url_state, update_url should still generate a valid path
       assert_raise FunctionClauseError, fn ->
-        UrlSync.update_url(socket, encoded_state, nil)
+        apply(UrlSync, :update_url, [socket, encoded_state, nil])
       end
     end
 
@@ -271,7 +271,7 @@ defmodule Cinder.UrlSyncTest do
 
       # Should now generate a valid path using the URI from url_state
       try do
-        UrlSync.update_url(socket, encoded_state, nil)
+        apply(UrlSync, :update_url, [socket, encoded_state, nil])
       rescue
         FunctionClauseError ->
           # Expected - push_patch doesn't work in tests, but the path should be valid
@@ -286,7 +286,7 @@ defmodule Cinder.UrlSyncTest do
 
       # Should use "/" as fallback path
       try do
-        UrlSync.update_url(socket, encoded_state, nil)
+        apply(UrlSync, :update_url, [socket, encoded_state, nil])
       rescue
         FunctionClauseError ->
           # Expected - push_patch doesn't work in tests, but path should be "/?artist.name=za"
@@ -620,7 +620,8 @@ defmodule Cinder.UrlSyncTest do
 
       result =
         UrlSync.handle_params(%{}, "http://localhost:4000/users", socket(),
-          persist_key: "users", persist_scope: %{id: "1"}
+          persist_key: "users",
+          persist_scope: %{id: "1"}
         )
 
       refute result.redirected, "expected no push_patch on metadata-only state"
@@ -632,7 +633,8 @@ defmodule Cinder.UrlSyncTest do
 
       result =
         UrlSync.handle_params(%{}, "http://localhost:4000/users", socket(),
-          persist_key: "users", persist_scope: %{id: "1"}
+          persist_key: "users",
+          persist_scope: %{id: "1"}
         )
 
       assert {:live, :patch, opts} = result.redirected

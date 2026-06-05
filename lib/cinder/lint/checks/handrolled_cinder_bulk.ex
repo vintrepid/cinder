@@ -203,7 +203,11 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
       start_line = m[:line] || 1
       end_line = m[:end][:line] || start_line + 50
 
-      {node, [%{event: event_str, start_line: start_line, end_line: end_line, body: body, node: node} | acc]}
+      {node,
+       [
+         %{event: event_str, start_line: start_line, end_line: end_line, body: body, node: node}
+         | acc
+       ]}
     else
       {node, acc}
     end
@@ -322,7 +326,8 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
     {_, found} =
       Macro.prewalk(body, nil, fn
         # Ash.Changeset.for_update(action, params)
-        {{:., _, [{:__aliases__, _, [:Ash, :Changeset]}, :for_update]}, _, [_action, params_ast | _]} = node,
+        {{:., _, [{:__aliases__, _, [:Ash, :Changeset]}, :for_update]}, _,
+         [_action, params_ast | _]} = node,
         nil ->
           {node, decode_map(params_ast)}
 
@@ -481,8 +486,10 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
   defp render_action(action_atom, param_kw) do
     changes =
       param_kw
-      |> Enum.map_join("\n      ",
-        fn {k, v} -> "change set_attribute(:#{k}, #{Macro.to_string(v)})" end)
+      |> Enum.map_join(
+        "\n      ",
+        fn {k, v} -> "change set_attribute(:#{k}, #{Macro.to_string(v)})" end
+      )
 
     """
     update :#{action_atom} do
@@ -754,7 +761,10 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
           source
         else
           before = String.slice(source, 0, body_start)
-          rest = String.slice(source, body_start + body_len, byte_size(source) - body_start - body_len)
+
+          rest =
+            String.slice(source, body_start + body_len, byte_size(source) - body_start - body_len)
+
           before <> new_body <> rest
         end
     end
@@ -780,7 +790,9 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
     body
     |> String.split("\n")
     |> Enum.map(fn line ->
-      if String.starts_with?(line, indent), do: String.slice(line, byte_size(indent), byte_size(line)), else: line
+      if String.starts_with?(line, indent),
+        do: String.slice(line, byte_size(indent), byte_size(line)),
+        else: line
     end)
     |> Enum.join("\n")
   end

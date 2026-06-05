@@ -7,6 +7,8 @@ defmodule Cinder.HEExTransforms do
   Round-trip safe: parse → transform → `to_heex/1`.
   """
 
+  @compile {:no_warn_undefined, [{MaestroTool.HEExParser, :traverse, 2}]}
+
   @type heex_tree :: list()
 
   @doc """
@@ -99,10 +101,17 @@ defmodule Cinder.HEExTransforms do
 
     extra_attrs =
       Enum.map(attrs, fn
-        {key, {:string, _, _} = v} -> {to_string(key), v, %{}}
-        {key, {:expr, _, _} = v} -> {to_string(key), v, %{}}
-        {key, value} when is_binary(value) -> {to_string(key), {:string, value, %{delimiter: 34}}, %{}}
-        {key, value} when is_atom(value) -> {to_string(key), {:expr, ":#{value}", %{}}, %{}}
+        {key, {:string, _, _} = v} ->
+          {to_string(key), v, %{}}
+
+        {key, {:expr, _, _} = v} ->
+          {to_string(key), v, %{}}
+
+        {key, value} when is_binary(value) ->
+          {to_string(key), {:string, value, %{delimiter: 34}}, %{}}
+
+        {key, value} when is_atom(value) ->
+          {to_string(key), {:expr, ":#{value}", %{}}, %{}}
       end)
 
     {:tag_self_close, ":bulk_action", base_attrs ++ extra_attrs}

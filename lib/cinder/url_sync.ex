@@ -152,7 +152,15 @@ defmodule Cinder.UrlSync do
 
       # The collection manages these specific parameter keys
       # Including after/before for keyset pagination
-      known_collection_keys = ["page", "sort", "page_size", "search", "after", "before", "_show_all"]
+      known_collection_keys = [
+        "page",
+        "sort",
+        "page_size",
+        "search",
+        "after",
+        "before",
+        "_show_all"
+      ]
 
       # Extract filter field names from encoded state (if provided)
       # This tells us exactly which parameters are collection-managed filter fields
@@ -359,7 +367,8 @@ defmodule Cinder.UrlSync do
   # `url_has_state?/1`, causing `handle_params` to re-enter this branch and
   # loop forever.
   defp bootstrap_state(persist_key, persist_scope, default_filters) do
-    persisted = persist_key && persist_scope && Cinder.Persistence.load(persist_key, persist_scope)
+    persisted =
+      persist_key && persist_scope && Cinder.Persistence.load(persist_key, persist_scope)
 
     cond do
       is_map(persisted) and url_has_state?(persisted) -> persisted

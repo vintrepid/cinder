@@ -92,7 +92,7 @@ defmodule Cinder.Controls do
     filters =
       Enum.map(filterable_columns, fn column ->
         current_value = Map.get(filter_values, column.field, "")
-        key = String.to_existing_atom(column.field)
+        key = control_key(column.field)
 
         {key,
          %{
@@ -133,6 +133,14 @@ defmodule Cinder.Controls do
       has_default_filters: map_size(Map.get(assigns, :default_filters, %{}) || %{}) > 0,
       show_all?: Map.get(assigns, :show_all?, false)
     }
+  end
+
+  defp control_key(field) when is_binary(field) do
+    if String.contains?(field, [".", "["]) do
+      field
+    else
+      String.to_existing_atom(field)
+    end
   end
 
   # ============================================================================

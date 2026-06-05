@@ -35,7 +35,7 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_item(socket, :not_a_string, "id", &Function.identity/1)
+        apply(Update, :update_item, [socket, :not_a_string, "id", &Function.identity/1])
       end
     end
 
@@ -43,7 +43,7 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_item(socket, "table", "id", fn _a, _b -> :ok end)
+        apply(Update, :update_item, [socket, "table", "id", fn _a, _b -> :ok end])
       end
     end
   end
@@ -71,7 +71,7 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_items(socket, "table", "not-a-list", &Function.identity/1)
+        apply(Update, :update_items, [socket, "table", "not-a-list", &Function.identity/1])
       end
     end
   end
@@ -111,7 +111,7 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_if_visible(socket, :not_a_string, "id", &Function.identity/1)
+        apply(Update, :update_if_visible, [socket, :not_a_string, "id", &Function.identity/1])
       end
     end
 
@@ -119,7 +119,7 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_if_visible(socket, "table", "id", fn _a, _b -> :ok end)
+        apply(Update, :update_if_visible, [socket, "table", "id", fn _a, _b -> :ok end])
       end
     end
   end
@@ -151,7 +151,12 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_items_if_visible(socket, "table", "not-a-list", &Function.identity/1)
+        apply(Update, :update_items_if_visible, [
+          socket,
+          "table",
+          "not-a-list",
+          &Function.identity/1
+        ])
       end
     end
 
@@ -159,7 +164,12 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_items_if_visible(socket, :not_a_string, ["id"], &Function.identity/1)
+        apply(Update, :update_items_if_visible, [
+          socket,
+          :not_a_string,
+          ["id"],
+          &Function.identity/1
+        ])
       end
     end
 
@@ -167,7 +177,12 @@ defmodule Cinder.UpdateTest do
       socket = %Phoenix.LiveView.Socket{assigns: %{}}
 
       assert_raise FunctionClauseError, fn ->
-        Update.update_items_if_visible(socket, "table", ["id"], fn _a, _b -> :ok end)
+        apply(Update, :update_items_if_visible, [
+          socket,
+          "table",
+          ["id"],
+          fn _a, _b -> :ok end
+        ])
       end
     end
   end

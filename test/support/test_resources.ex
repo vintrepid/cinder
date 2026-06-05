@@ -54,6 +54,10 @@ defmodule TestResourceForInference do
     attribute(:settings, TestSettings)
     attribute(:metadata, :map)
   end
+
+  actions do
+    defaults([:read])
+  end
 end
 
 defmodule NotAnAshResource do
@@ -77,6 +81,10 @@ defmodule TestUuidResource do
   relationships do
     belongs_to(:user, TestUserResource, destination_attribute: :id, source_attribute: :user_id)
   end
+
+  actions do
+    defaults([:read])
+  end
 end
 
 defmodule TestUserResource do
@@ -89,6 +97,10 @@ defmodule TestUserResource do
     attribute(:profile_id, :uuid)
     attribute(:profile, TestProfile)
     attribute(:settings, TestSettings)
+  end
+
+  actions do
+    defaults([:read])
   end
 end
 
