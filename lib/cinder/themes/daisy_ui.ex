@@ -15,6 +15,10 @@ defmodule Cinder.Themes.DaisyUI do
   # Table
   set :container_class, ""
   set :controls_class, "card card-sm card-border bg-base-100 mb-4"
+
+  set :table_toolbar_class,
+      "sticky top-0 z-40 mb-3 flex flex-nowrap items-center gap-3 overflow-x-auto border-b border-base-300 bg-base-100/95 px-3 py-2 shadow-sm backdrop-blur"
+
   set :table_wrapper_class, "card card-border bg-base-100"
   set :table_class, "table table-zebra w-full"
   set :thead_class, ""
@@ -41,13 +45,13 @@ defmodule Cinder.Themes.DaisyUI do
 
   set :filter_clear_button_class, "btn btn-ghost btn-xs ml-2"
   # Input styling
-  set :filter_text_input_class, "input input-bordered w-full"
+  set :filter_text_input_class, "input input-bordered input-sm w-full"
   set :filter_date_input_class, "input input-bordered w-40"
 
   set :filter_number_input_class,
       "input input-bordered w-20 [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
 
-  set :filter_select_input_class, "select select-bordered w-48"
+  set :filter_select_input_class, "select select-bordered select-sm w-48"
   # Select filter (dropdown interface)
   set :filter_select_container_class, "relative"
 
@@ -96,6 +100,7 @@ defmodule Cinder.Themes.DaisyUI do
 
   # Pagination
   set :pagination_wrapper_class, "p-4"
+  set :pagination_compact_wrapper_class, "shrink-0"
   set :pagination_container_class, "flex items-center justify-between"
   set :pagination_info_class, "text-sm"
   set :pagination_count_class, "text-base-content/50 text-xs ml-2"

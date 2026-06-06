@@ -166,6 +166,7 @@ defmodule Cinder.Controls do
   attr :target, :any, default: nil
   attr :filter_values, :map, default: %{}
   attr :raw_filter_params, :map, default: %{}
+  attr :compact, :boolean, default: false
 
   def render_filter(%{filter: nil} = assigns) do
     ~H""
@@ -187,14 +188,18 @@ defmodule Cinder.Controls do
       assigns
       |> assign(:column, column)
       |> assign(:table_id, table_id)
+      |> assign(:wrapper_class, filter_wrapper_class(assigns.theme, assigns.compact))
+      |> assign(:label_class, filter_label_class(assigns.theme, assigns.compact))
 
     ~H"""
-    <div class={@theme.filter_input_wrapper_class} data-key="filter_input_wrapper_class">
-      <FilterManager.filter_label
-        column={@column}
-        table_id={@table_id}
-        theme={@theme}
-      />
+    <div class={@wrapper_class} data-key="filter_input_wrapper_class">
+      <div class={@label_class}>
+        <FilterManager.filter_label
+          column={@column}
+          table_id={@table_id}
+          theme={@theme}
+        />
+      </div>
       <FilterManager.filter_input
         column={@column}
         table_id={@table_id}
@@ -220,15 +225,23 @@ defmodule Cinder.Controls do
   attr :search, :map, default: nil
   attr :theme, :map, required: true
   attr :target, :any, default: nil
+  attr :compact, :boolean, default: false
 
   def render_search(%{search: nil} = assigns) do
     ~H""
   end
 
   def render_search(assigns) do
+    assigns =
+      assigns
+      |> assign(:wrapper_class, filter_wrapper_class(assigns.theme, assigns.compact))
+      |> assign(:label_class, filter_label_class(assigns.theme, assigns.compact))
+
     ~H"""
-    <div class={@theme.filter_input_wrapper_class} data-key="filter_input_wrapper_class">
-      <label for={@search.id} class={@theme.filter_label_class} data-key="filter_label_class">{@search.label}:</label>
+    <div class={@wrapper_class} data-key="filter_input_wrapper_class">
+      <div class={@label_class}>
+        <label for={@search.id} class={@theme.filter_label_class} data-key="filter_label_class">{@search.label}:</label>
+      </div>
       <div class="flex items-center">
         <div class="flex-1 relative">
           <input
@@ -265,6 +278,15 @@ defmodule Cinder.Controls do
     </div>
     """
   end
+
+  defp filter_wrapper_class(theme, false), do: theme.filter_input_wrapper_class
+
+  defp filter_wrapper_class(theme, true) do
+    Map.get(theme, :filter_compact_input_wrapper_class, "form-control min-w-36")
+  end
+
+  defp filter_label_class(_theme, false), do: nil
+  defp filter_label_class(_theme, true), do: "sr-only"
 
   @doc """
   Renders the default filter header (title, active count badge, clear all button, toggle).

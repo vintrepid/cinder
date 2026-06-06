@@ -180,5 +180,35 @@ defmodule Cinder.Renderers.TableSelectionTest do
       assert html =~ ~r/<input[^>]*checked[^>]*phx-value-id="user-1"/
       refute html =~ ~r/<input[^>]*checked[^>]*phx-value-id="user-2"/
     end
+
+    test "sticky toolbar is opt-in and renders a top pagination copy" do
+      page = %Ash.Page.Offset{
+        results: [%{id: "user-1", name: "Alice"}],
+        count: 200,
+        offset: 100,
+        limit: 100,
+        more?: true
+      }
+
+      assigns =
+        base_assigns()
+        |> Map.merge(%{
+          sticky_toolbar: true,
+          show_pagination: true,
+          page: page,
+          page_size_config: %{
+            configurable: true,
+            selected_page_size: 100,
+            default_page_size: 100,
+            page_size_options: [50, 100, 200]
+          }
+        })
+
+      html = render_component(&TableRenderer.render/1, assigns)
+
+      assert html =~ ~s(data-key="table_toolbar_class")
+      assert html =~ ~s(id="test-table-top-page-size-options")
+      assert html =~ ~s(id="test-table-bottom-page-size-options")
+    end
   end
 end

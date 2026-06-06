@@ -238,6 +238,12 @@ defmodule Cinder.Collection do
 
   attr(:show_pagination, :boolean, default: true, doc: "Whether to show pagination controls")
 
+  attr(:sticky_toolbar, :boolean,
+    default: false,
+    doc:
+      "For table layout, render filters, bulk actions, and a top pagination copy in a compact sticky toolbar."
+  )
+
   attr(:default_filters, :map,
     default: %{},
     doc:
@@ -584,6 +590,7 @@ defmodule Cinder.Collection do
         show_filters={@show_filters}
         show_sort={@show_sort}
         show_pagination={@show_pagination}
+        sticky_toolbar={@sticky_toolbar}
         loading_message={@loading_message}
         filters_label={@filters_label}
         sort_label={@sort_label}

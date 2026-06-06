@@ -56,8 +56,83 @@ defmodule Cinder.FilterManager do
     if controls_slot != [] do
       render_filter_controls_with_slot(assigns, controls_slot)
     else
-      render_filter_controls_default(assigns)
+      if Map.get(assigns, :compact, false) do
+        render_filter_controls_compact(assigns)
+      else
+        render_filter_controls_default(assigns)
+      end
     end
+  end
+
+  defp render_filter_controls_compact(assigns) do
+    controls_data = Cinder.Controls.build_controls_data(assigns)
+    has_content = controls_data.filters != [] or controls_data.search != nil
+
+    assigns =
+      assigns
+      |> assign(:controls_data, controls_data)
+      |> assign(:has_content, has_content)
+      |> assign(
+        :filter_inputs_class,
+        Map.get(
+          assigns.theme,
+          :filter_compact_inputs_class,
+          "fieldset flex flex-nowrap items-end gap-2"
+        )
+      )
+
+    ~H"""
+    <div :if={@has_content} class="shrink-0" data-key="filter_container_class">
+      <form phx-change="filter_change" phx-submit="filter_change" phx-target={@target}>
+        <div class={@filter_inputs_class} data-key="filter_inputs_class">
+          <Cinder.Controls.render_search
+            :if={@controls_data.search != nil}
+            search={@controls_data.search}
+            theme={@theme}
+            target={@target}
+            compact
+          />
+          <Cinder.Controls.render_filter
+            :for={{_name, filter} <- @controls_data.filters}
+            filter={filter}
+            theme={@theme}
+            target={@target}
+            filter_values={@controls_data.filter_values}
+            raw_filter_params={@controls_data.raw_filter_params}
+            compact
+          />
+          <button
+            :if={@controls_data.filters != []}
+            type="button"
+            phx-click="clear_all_filters"
+            phx-target={@target}
+            class={[
+              @theme.filter_clear_all_class,
+              if(@controls_data.active_filter_count == 0 and not @controls_data.show_all?,
+                do: "hidden",
+                else: ""
+              )
+            ]}
+            data-key="filter_clear_all_class"
+          >
+            {if @controls_data.show_all? and @controls_data.has_default_filters,
+              do: dgettext("cinder", "Defaults"),
+              else: dgettext("cinder", "Clear all")}
+          </button>
+          <button
+            :if={@controls_data.has_default_filters}
+            type="button"
+            phx-click="show_all_filters"
+            phx-target={@target}
+            class={[@theme.filter_clear_all_class, if(@controls_data.show_all?, do: "hidden", else: "")]}
+            data-key="filter_clear_all_class"
+          >
+            {dgettext("cinder", "Show all")}
+          </button>
+        </div>
+      </form>
+    </div>
+    """
   end
 
   defp render_filter_controls_with_slot(assigns, controls_slot) do

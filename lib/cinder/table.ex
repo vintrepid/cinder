@@ -60,6 +60,11 @@ defmodule Cinder.Table do
         "Parent receives {event_name, %{query: Ash.Query.t(), id: string()}}."
 
   attr :show_pagination, :boolean, default: true, doc: "Whether to show pagination controls"
+
+  attr :sticky_toolbar, :boolean,
+    default: false,
+    doc: "Whether to use the compact sticky table toolbar"
+
   attr :show_filters, :boolean, default: nil, doc: "Whether to show filter controls"
   attr :loading_message, :string, default: nil, doc: "Message to show while loading"
   attr :filters_label, :string, default: nil, doc: "Label for the filters component"

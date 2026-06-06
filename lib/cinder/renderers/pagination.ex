@@ -78,9 +78,10 @@ defmodule Cinder.Renderers.Pagination do
       |> assign(:total_count, page.count)
       |> assign(:has_prev, AshPhoenix.LiveView.prev_page?(page))
       |> assign(:has_next, AshPhoenix.LiveView.next_page?(page))
+      |> assign(:wrapper_class, pagination_wrapper_class(assigns))
 
     ~H"""
-    <div class={@theme.pagination_wrapper_class} data-key="pagination_wrapper_class">
+    <div class={@wrapper_class} data-key="pagination_wrapper_class">
       <div class={@theme.pagination_container_class} data-key="pagination_container_class">
       <!-- Left side: Page info -->
       <div class={@theme.pagination_info_class} data-key="pagination_info_class">
@@ -94,7 +95,13 @@ defmodule Cinder.Renderers.Pagination do
       <div class="flex items-center space-x-6">
         <!-- Page size selector (if configurable) -->
         <div :if={@page_size_config.configurable} class={@theme.page_size_container_class} data-key="page_size_container_class">
-          <.page_size_selector page_size_config={@page_size_config} theme={@theme} myself={@myself} id={@id} />
+          <.page_size_selector
+            page_size_config={@page_size_config}
+            theme={@theme}
+            myself={@myself}
+            id={@id}
+            id_suffix={Map.get(assigns, :id_suffix)}
+          />
         </div>
 
         <!-- Page navigation -->
@@ -192,9 +199,10 @@ defmodule Cinder.Renderers.Pagination do
       |> assign(:total_count, page.count)
       |> assign(:has_prev, has_prev)
       |> assign(:has_next, has_next)
+      |> assign(:wrapper_class, pagination_wrapper_class(assigns))
 
     ~H"""
-    <div class={@theme.pagination_wrapper_class} data-key="pagination_wrapper_class">
+    <div class={@wrapper_class} data-key="pagination_wrapper_class">
       <div class={@theme.pagination_container_class} data-key="pagination_container_class">
       <!-- Left side: Count info -->
       <div class={@theme.pagination_info_class} data-key="pagination_info_class">
@@ -205,7 +213,13 @@ defmodule Cinder.Renderers.Pagination do
       <div class="flex items-center space-x-6">
         <!-- Page size selector (if configurable) -->
         <div :if={@page_size_config.configurable} class={@theme.page_size_container_class} data-key="page_size_container_class">
-          <.page_size_selector page_size_config={@page_size_config} theme={@theme} myself={@myself} id={@id} />
+          <.page_size_selector
+            page_size_config={@page_size_config}
+            theme={@theme}
+            myself={@myself}
+            id={@id}
+            id_suffix={Map.get(assigns, :id_suffix)}
+          />
         </div>
 
         <!-- Keyset navigation: Prev / Next only -->
@@ -241,7 +255,12 @@ defmodule Cinder.Renderers.Pagination do
   end
 
   defp page_size_selector(assigns) do
-    dropdown_id = "#{assigns.id}-page-size-options"
+    dropdown_id =
+      case Map.get(assigns, :id_suffix) do
+        nil -> "#{assigns.id}-page-size-options"
+        suffix -> "#{assigns.id}-#{suffix}-page-size-options"
+      end
+
     # Split the translated string on {selector} to allow flexible word order
     [before_selector, after_selector] =
       dgettext("cinder", "Show {selector} per page")
@@ -311,6 +330,12 @@ defmodule Cinder.Renderers.Pagination do
       [1]
     end
   end
+
+  defp pagination_wrapper_class(%{compact: true, theme: theme}) do
+    Map.get(theme, :pagination_compact_wrapper_class, theme.pagination_wrapper_class)
+  end
+
+  defp pagination_wrapper_class(%{theme: theme}), do: theme.pagination_wrapper_class
 
   # Check if there's a previous page in keyset mode.
   # - If we used `after` cursor (forward navigation): there's always a previous page

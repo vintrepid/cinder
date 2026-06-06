@@ -32,37 +32,41 @@ defmodule Cinder.Renderers.Table do
   def render(assigns) do
     ~H"""
     <div class={[@theme.container_class, "relative"]} data-key="container_class">
-      <!-- Filter Controls (including search) -->
-      <div :if={@show_filters} class={@theme.controls_class} data-key="controls_class">
-        <Cinder.FilterManager.render_filter_controls
-          table_id={@id}
-          columns={Map.get(assigns, :query_columns, @columns)}
-          filters={@filters}
-          theme={@theme}
-          target={@myself}
-          filters_label={@filters_label}
-          filter_mode={@show_filters}
-          search_term={@search_term}
-          show_search={@search_enabled}
-          search_label={@search_label}
-          search_placeholder={@search_placeholder}
-          raw_filter_params={Map.get(assigns, :raw_filter_params, %{})}
-          controls_slot={Map.get(assigns, :controls_slot, [])}
-          default_filters={Map.get(assigns, :default_filters, %{})}
-          show_all?={Map.get(assigns, :show_all?, false)}
-        />
-      </div>
+      <%= if Map.get(assigns, :sticky_toolbar, false) do %>
+        <.sticky_toolbar assigns={assigns} />
+      <% else %>
+        <!-- Filter Controls (including search) -->
+        <div :if={@show_filters} class={@theme.controls_class} data-key="controls_class">
+          <Cinder.FilterManager.render_filter_controls
+            table_id={@id}
+            columns={Map.get(assigns, :query_columns, @columns)}
+            filters={@filters}
+            theme={@theme}
+            target={@myself}
+            filters_label={@filters_label}
+            filter_mode={@show_filters}
+            search_term={@search_term}
+            show_search={@search_enabled}
+            search_label={@search_label}
+            search_placeholder={@search_placeholder}
+            raw_filter_params={Map.get(assigns, :raw_filter_params, %{})}
+            controls_slot={Map.get(assigns, :controls_slot, [])}
+            default_filters={Map.get(assigns, :default_filters, %{})}
+            show_all?={Map.get(assigns, :show_all?, false)}
+          />
+        </div>
 
-      <!-- Bulk Actions -->
-      <BulkActions.render
-        selectable={@selectable}
-        selected_ids={@selected_ids}
-        data={@data}
-        id_field={@id_field}
-        bulk_action_slots={@bulk_action_slots}
-        theme={@theme}
-        myself={@myself}
-      />
+        <!-- Bulk Actions -->
+        <BulkActions.render
+          selectable={@selectable}
+          selected_ids={@selected_ids}
+          data={@data}
+          id_field={@id_field}
+          bulk_action_slots={@bulk_action_slots}
+          theme={@theme}
+          myself={@myself}
+        />
+      <% end %>
 
       <!-- Main table -->
       <div class={@theme.table_wrapper_class} data-key="table_wrapper_class">
@@ -173,7 +177,64 @@ defmodule Cinder.Renderers.Table do
         show_pagination={@show_pagination}
         pagination_mode={@pagination_mode}
         id={@id}
+        id_suffix="bottom"
       />
+    </div>
+    """
+  end
+
+  defp sticky_toolbar(%{assigns: assigns}) do
+    assigns = assigns
+
+    ~H"""
+    <div
+      class={Map.get(@theme, :table_toolbar_class, "sticky top-0 z-40 flex items-center gap-3 bg-white py-2")}
+      data-key="table_toolbar_class"
+    >
+      <div :if={@show_filters} class="shrink-0" data-key="controls_class">
+        <Cinder.FilterManager.render_filter_controls
+          table_id={@id}
+          columns={Map.get(assigns, :query_columns, @columns)}
+          filters={@filters}
+          theme={@theme}
+          target={@myself}
+          filters_label={@filters_label}
+          filter_mode={@show_filters}
+          search_term={@search_term}
+          show_search={@search_enabled}
+          search_label={@search_label}
+          search_placeholder={@search_placeholder}
+          raw_filter_params={Map.get(assigns, :raw_filter_params, %{})}
+          controls_slot={Map.get(assigns, :controls_slot, [])}
+          default_filters={Map.get(assigns, :default_filters, %{})}
+          show_all?={Map.get(assigns, :show_all?, false)}
+          compact
+        />
+      </div>
+
+      <BulkActions.render
+        selectable={@selectable}
+        selected_ids={@selected_ids}
+        data={@data}
+        id_field={@id_field}
+        bulk_action_slots={@bulk_action_slots}
+        theme={@theme}
+        myself={@myself}
+      />
+
+      <div class="ml-auto shrink-0">
+        <Pagination.render
+          page={@page}
+          page_size_config={@page_size_config}
+          theme={@theme}
+          myself={@myself}
+          show_pagination={@show_pagination}
+          pagination_mode={@pagination_mode}
+          id={@id}
+          id_suffix="top"
+          compact
+        />
+      </div>
     </div>
     """
   end
