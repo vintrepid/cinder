@@ -209,7 +209,7 @@ defmodule Cinder.Controls do
         current_value={@filter.value}
         filter_values={@filter_values}
         raw_filter_params={@raw_filter_params}
-        theme={@theme}
+        theme={filter_theme(@theme, @compact, @filter.type)}
         target={@target}
       />
     </div>
@@ -311,6 +311,16 @@ defmodule Cinder.Controls do
   defp filter_label_class(true, _type) do
     "[&_.label]:min-h-0 [&_.label]:p-0 [&_.label]:text-xs [&_.label]:font-medium [&_.label]:leading-none [&_.label]:text-base-content/70"
   end
+
+  defp filter_theme(theme, true, type) when type in [:boolean, :radio_group] do
+    theme
+    |> Map.put(:filter_radio_group_container_class, "flex h-6 items-center gap-2")
+    |> Map.put(:filter_radio_group_option_class, "flex items-center gap-1")
+    |> Map.put(:filter_radio_group_radio_class, "radio h-3 w-3")
+    |> Map.put(:filter_radio_group_label_class, "text-xs cursor-pointer")
+  end
+
+  defp filter_theme(theme, _compact, _type), do: theme
 
   @doc """
   Renders the default filter header (title, active count badge, clear all button, toggle).
