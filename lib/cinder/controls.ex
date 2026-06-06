@@ -286,7 +286,10 @@ defmodule Cinder.Controls do
   end
 
   defp filter_label_class(_theme, false), do: nil
-  defp filter_label_class(_theme, true), do: "sr-only"
+
+  defp filter_label_class(_theme, true) do
+    "[&_.label]:min-h-0 [&_.label]:p-0 [&_.label]:text-xs [&_.label]:font-medium [&_.label]:leading-none [&_.label]:text-base-content/70"
+  end
 
   @doc """
   Renders the default filter header (title, active count badge, clear all button, toggle).
