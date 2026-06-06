@@ -71,7 +71,7 @@ defmodule Cinder.Renderers.Table do
       <!-- Main table -->
       <div class={@theme.table_wrapper_class} data-key="table_wrapper_class">
         <table class={@theme.table_class} data-key="table_class">
-          <thead class={@theme.thead_class} data-key="thead_class">
+          <thead class={thead_class(assigns)} data-key="thead_class">
             <tr class={@theme.header_row_class} data-key="header_row_class">
               <th :if={@selectable} class={[@theme.th_class, "w-10"]} data-key="th_class">
                 <input
@@ -239,6 +239,12 @@ defmodule Cinder.Renderers.Table do
     </div>
     """
   end
+
+  defp thead_class(%{sticky_toolbar: true, theme: theme}) do
+    [theme.thead_class, "sticky top-28 z-30 bg-base-100 shadow-sm"]
+  end
+
+  defp thead_class(%{theme: theme}), do: theme.thead_class
 
   defp table_rows(%{streams: %{data: data}}), do: data
 
