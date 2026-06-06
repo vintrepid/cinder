@@ -188,8 +188,11 @@ defmodule Cinder.Controls do
       assigns
       |> assign(:column, column)
       |> assign(:table_id, table_id)
-      |> assign(:wrapper_class, filter_wrapper_class(assigns.theme, assigns.compact))
-      |> assign(:label_class, filter_label_class(assigns.theme, assigns.compact))
+      |> assign(
+        :wrapper_class,
+        filter_wrapper_class(assigns.theme, assigns.compact, assigns.filter.type)
+      )
+      |> assign(:label_class, filter_label_class(assigns.compact, assigns.filter.type))
 
     ~H"""
     <div class={@wrapper_class} data-key="filter_input_wrapper_class">
@@ -234,8 +237,8 @@ defmodule Cinder.Controls do
   def render_search(assigns) do
     assigns =
       assigns
-      |> assign(:wrapper_class, filter_wrapper_class(assigns.theme, assigns.compact))
-      |> assign(:label_class, filter_label_class(assigns.theme, assigns.compact))
+      |> assign(:wrapper_class, filter_wrapper_class(assigns.theme, assigns.compact, :search))
+      |> assign(:label_class, filter_label_class(assigns.compact, :search))
 
     ~H"""
     <div class={@wrapper_class} data-key="filter_input_wrapper_class">
@@ -279,15 +282,32 @@ defmodule Cinder.Controls do
     """
   end
 
-  defp filter_wrapper_class(theme, false), do: theme.filter_input_wrapper_class
+  defp filter_wrapper_class(theme, false, _type), do: theme.filter_input_wrapper_class
 
-  defp filter_wrapper_class(theme, true) do
+  defp filter_wrapper_class(theme, true, type) when type in [:boolean, :radio_group] do
+    [
+      Map.get(theme, :filter_compact_input_wrapper_class, "form-control min-w-28"),
+      "[&_[data-key=filter_radio_group_container_class]]:h-6",
+      "[&_[data-key=filter_radio_group_container_class]]:space-x-2",
+      "[&_[data-key=filter_radio_group_option_class]]:space-x-1",
+      "[&_[data-key=filter_radio_group_radio_class]]:h-3",
+      "[&_[data-key=filter_radio_group_radio_class]]:w-3",
+      "[&_[data-key=filter_radio_group_label_class]]:text-xs"
+    ]
+  end
+
+  defp filter_wrapper_class(theme, true, _type) do
     Map.get(theme, :filter_compact_input_wrapper_class, "form-control min-w-36")
   end
 
-  defp filter_label_class(_theme, false), do: nil
+  defp filter_label_class(false, _type), do: nil
 
-  defp filter_label_class(_theme, true) do
+  defp filter_label_class(true, type)
+       when type in [:search, :select, :multi_select, :autocomplete] do
+    "sr-only"
+  end
+
+  defp filter_label_class(true, _type) do
     "[&_.label]:min-h-0 [&_.label]:p-0 [&_.label]:text-xs [&_.label]:font-medium [&_.label]:leading-none [&_.label]:text-base-content/70"
   end
 
