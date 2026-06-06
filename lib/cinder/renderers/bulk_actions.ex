@@ -16,6 +16,8 @@ defmodule Cinder.Renderers.BulkActions do
   ## Required assigns
   - `selectable` - Boolean indicating if selection is enabled
   - `selected_ids` - MapSet of selected record IDs
+  - `data` - Current page records, used to distinguish off-page selections
+  - `id_field` - Field used as the record identifier
   - `bulk_action_slots` - List of bulk_action slot definitions
   - `theme` - Theme configuration map
   - `myself` - LiveComponent reference for event targeting
@@ -39,10 +41,27 @@ defmodule Cinder.Renderers.BulkActions do
       assigns
       |> assign(:selected_ids, selected_ids)
       |> assign(:selected_count, MapSet.size(selected_ids))
+      |> assign(:off_page_selected_count, off_page_selected_count(assigns, selected_ids))
       |> assign(:slots, slots)
 
     ~H"""
     <div class={@theme.bulk_actions_container_class} data-key="bulk_actions_container_class">
+      <span :if={@off_page_selected_count > 0} class="text-sm opacity-70">
+        {@selected_count} selected, {@off_page_selected_count} off this page
+      </span>
+      <button
+        :if={@off_page_selected_count > 0}
+        type="button"
+        phx-click={JS.push("clear_selection", target: @myself)}
+        class={[
+          @theme.button_class,
+          @theme.button_secondary_class,
+          @selected_count == 0 && @theme.button_disabled_class
+        ]}
+        disabled={@selected_count == 0}
+      >
+        Clear all selected
+      </button>
       <%= for {slot, index} <- Enum.with_index(@slots) do %>
         <span
           phx-click={JS.push("bulk_action_execute", value: %{index: index}, target: @myself)}
@@ -101,4 +120,30 @@ defmodule Cinder.Renderers.BulkActions do
   defp interpolate_text(message, count) do
     String.replace(message, "{count}", to_string(count))
   end
+
+  defp off_page_selected_count(assigns, selected_ids) do
+    if Map.has_key?(assigns, :data) do
+      off_page_selected_count(assigns, selected_ids, Map.get(assigns, :data))
+    else
+      0
+    end
+  end
+
+  defp off_page_selected_count(assigns, selected_ids, data) do
+    page_ids =
+      data
+      |> page_ids(Map.get(assigns, :id_field, :id))
+
+    selected_ids
+    |> MapSet.difference(page_ids)
+    |> MapSet.size()
+  end
+
+  defp page_ids(data, id_field) when is_list(data) do
+    data
+    |> Enum.map(&to_string(Map.get(&1, id_field)))
+    |> MapSet.new()
+  end
+
+  defp page_ids(_data, _id_field), do: MapSet.new()
 end

@@ -75,6 +75,8 @@ defmodule Cinder.Renderers.List do
       <BulkActions.render
         selectable={@selectable}
         selected_ids={@selected_ids}
+        data={@data}
+        id_field={@id_field}
         bulk_action_slots={@bulk_action_slots}
         theme={@theme}
         myself={@myself}

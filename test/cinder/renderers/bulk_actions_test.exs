@@ -112,6 +112,45 @@ defmodule Cinder.Renderers.BulkActionsTest do
 
       assert html =~ "Process 3 items"
     end
+
+    test "renders clear-all control when selected rows include off-page items" do
+      assigns = %{
+        selectable: true,
+        selected_ids: MapSet.new(["1", "2", "3"]),
+        data: [%{id: "1"}, %{id: "2"}],
+        id_field: :id,
+        bulk_action_slots: [
+          %{action: :test_action, label: "Test Action ({count})", variant: :primary}
+        ],
+        theme: @theme,
+        myself: %Phoenix.LiveComponent.CID{cid: 1}
+      }
+
+      html = render_component(&BulkActions.render/1, assigns)
+
+      assert html =~ "3 selected, 1 off this page"
+      assert html =~ "Clear all selected"
+      assert html =~ "clear_selection"
+    end
+
+    test "does not render clear-all control when selection is only on current page" do
+      assigns = %{
+        selectable: true,
+        selected_ids: MapSet.new(["1", "2"]),
+        data: [%{id: "1"}, %{id: "2"}],
+        id_field: :id,
+        bulk_action_slots: [
+          %{action: :test_action, label: "Test Action ({count})", variant: :primary}
+        ],
+        theme: @theme,
+        myself: %Phoenix.LiveComponent.CID{cid: 1}
+      }
+
+      html = render_component(&BulkActions.render/1, assigns)
+
+      refute html =~ "off this page"
+      refute html =~ "Clear all selected"
+    end
   end
 
   describe "custom content fallback" do

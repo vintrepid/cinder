@@ -132,6 +132,38 @@ defmodule Cinder.Renderers.TableSelectionTest do
       assert html =~ ~r/<input[^>]*checked[^>]*phx-click="toggle_select_all_page"/
     end
 
+    test "header checkbox is indeterminate when some page items are selected" do
+      assigns =
+        base_assigns()
+        |> Map.merge(%{
+          selectable: true,
+          selected_ids: MapSet.new(["user-1"]),
+          id_field: :id,
+          data: [%{id: "user-1", name: "Alice"}, %{id: "user-2", name: "Bob"}]
+        })
+
+      html = render_component(&TableRenderer.render/1, assigns)
+
+      assert html =~ ~s(phx-hook="CinderIndeterminateCheckbox")
+      assert html =~ ~s(data-indeterminate="true")
+      refute html =~ ~r/<input[^>]*checked[^>]*phx-click="toggle_select_all_page"/
+    end
+
+    test "header checkbox is not indeterminate when all page items are selected" do
+      assigns =
+        base_assigns()
+        |> Map.merge(%{
+          selectable: true,
+          selected_ids: MapSet.new(["user-1", "user-2"]),
+          id_field: :id,
+          data: [%{id: "user-1", name: "Alice"}, %{id: "user-2", name: "Bob"}]
+        })
+
+      html = render_component(&TableRenderer.render/1, assigns)
+
+      assert html =~ ~s(data-indeterminate="false")
+    end
+
     test "row checkbox reflects selection state" do
       assigns =
         base_assigns()

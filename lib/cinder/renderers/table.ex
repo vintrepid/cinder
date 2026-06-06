@@ -57,6 +57,8 @@ defmodule Cinder.Renderers.Table do
       <BulkActions.render
         selectable={@selectable}
         selected_ids={@selected_ids}
+        data={@data}
+        id_field={@id_field}
         bulk_action_slots={@bulk_action_slots}
         theme={@theme}
         myself={@myself}
@@ -69,8 +71,11 @@ defmodule Cinder.Renderers.Table do
             <tr class={@theme.header_row_class} data-key="header_row_class">
               <th :if={@selectable} class={[@theme.th_class, "w-10"]} data-key="th_class">
                 <input
+                  id={"#{@id}-select-all-page"}
                   type="checkbox"
                   checked={all_page_selected?(@selected_ids, @data, @id_field)}
+                  data-indeterminate={page_selection_indeterminate(@selected_ids, @data, @id_field)}
+                  phx-hook="CinderIndeterminateCheckbox"
                   phx-click="toggle_select_all_page"
                   phx-target={@myself}
                   class={@theme.selection_checkbox_class}
@@ -254,6 +259,23 @@ defmodule Cinder.Renderers.Table do
   end
 
   defp all_page_selected?(_selected_ids, _data, _id_field), do: false
+
+  defp some_page_selected?(selected_ids, data, id_field) when is_list(data) and data != [] do
+    Enum.any?(data, fn item ->
+      item_selected?(selected_ids, item, id_field)
+    end)
+  end
+
+  defp some_page_selected?(_selected_ids, _data, _id_field), do: false
+
+  defp page_selection_indeterminate(selected_ids, data, id_field) do
+    if some_page_selected?(selected_ids, data, id_field) &&
+         !all_page_selected?(selected_ids, data, id_field) do
+      "true"
+    else
+      "false"
+    end
+  end
 
   defp item_selected?(selected_ids, item, id_field) do
     id = to_string(Map.get(item, id_field))
