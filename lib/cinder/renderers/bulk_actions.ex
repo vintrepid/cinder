@@ -36,6 +36,7 @@ defmodule Cinder.Renderers.BulkActions do
   defp render_bulk_actions(assigns) do
     selected_ids = Map.get(assigns, :selected_ids, MapSet.new())
     slots = Map.get(assigns, :bulk_action_slots, [])
+    compact = Map.get(assigns, :compact, false)
 
     assigns =
       assigns
@@ -43,9 +44,11 @@ defmodule Cinder.Renderers.BulkActions do
       |> assign(:selected_count, MapSet.size(selected_ids))
       |> assign(:off_page_selected_count, off_page_selected_count(assigns, selected_ids))
       |> assign(:slots, slots)
+      |> assign(:container_class, container_class(assigns.theme, compact))
+      |> assign(:button_class, button_class(assigns.theme, compact))
 
     ~H"""
-    <div class={@theme.bulk_actions_container_class} data-key="bulk_actions_container_class">
+    <div class={@container_class} data-key="bulk_actions_container_class">
       <span :if={@off_page_selected_count > 0} class="text-sm opacity-70">
         {@selected_count} selected, {@off_page_selected_count} off this page
       </span>
@@ -54,7 +57,7 @@ defmodule Cinder.Renderers.BulkActions do
         type="button"
         phx-click={JS.push("clear_selection", target: @myself)}
         class={[
-          @theme.button_class,
+          @button_class,
           @theme.button_secondary_class,
           @selected_count == 0 && @theme.button_disabled_class
         ]}
@@ -71,6 +74,7 @@ defmodule Cinder.Renderers.BulkActions do
           <%= if has_label?(slot) do %>
             <.themed_button
               theme={@theme}
+              button_class={@button_class}
               label={slot[:label]}
               variant={slot[:variant] || :primary}
               selected_count={@selected_count}
@@ -90,7 +94,7 @@ defmodule Cinder.Renderers.BulkActions do
 
     button_class =
       [
-        assigns.theme.button_class,
+        assigns.button_class,
         variant_class(assigns.theme, assigns.variant),
         disabled && assigns.theme.button_disabled_class
       ]
@@ -116,6 +120,18 @@ defmodule Cinder.Renderers.BulkActions do
   defp variant_class(theme, :secondary), do: theme.button_secondary_class
   defp variant_class(theme, :danger), do: theme.button_danger_class
   defp variant_class(_theme, _), do: nil
+
+  defp container_class(theme, false), do: theme.bulk_actions_container_class
+
+  defp container_class(theme, true) do
+    Map.get(theme, :bulk_actions_compact_container_class, theme.bulk_actions_container_class)
+  end
+
+  defp button_class(theme, false), do: theme.button_class
+
+  defp button_class(theme, true) do
+    Map.get(theme, :button_compact_class, theme.button_class)
+  end
 
   defp interpolate_text(message, count) do
     String.replace(message, "{count}", to_string(count))

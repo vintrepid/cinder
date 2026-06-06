@@ -173,9 +173,11 @@ defmodule Cinder.Themes.DaisyUI do
   set :selected_item_class, "ring-2 ring-primary"
   set :list_selection_container_class, "mb-2"
   set :bulk_actions_container_class, "flex flex-row gap-2 justify-end py-3 px-4"
+  set :bulk_actions_compact_container_class, "flex shrink-0 flex-row items-center gap-1 px-0 py-0"
 
   # Buttons
   set :button_class, "btn"
+  set :button_compact_class, "btn btn-sm"
   set :button_primary_class, "btn-primary"
   set :button_secondary_class, "btn-neutral"
   set :button_danger_class, "btn-error"

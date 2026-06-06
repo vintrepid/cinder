@@ -220,6 +220,7 @@ defmodule Cinder.Renderers.Table do
         bulk_action_slots={@bulk_action_slots}
         theme={@theme}
         myself={@myself}
+        compact
       />
 
       <div class="ml-auto shrink-0">
