@@ -292,6 +292,7 @@ defmodule Cinder.Controls do
       "[&_[data-key=filter_radio_group_option_class]]:space-x-1",
       "[&_[data-key=filter_radio_group_radio_class]]:h-3",
       "[&_[data-key=filter_radio_group_radio_class]]:w-3",
+      "[&_[data-key=filter_radio_group_radio_class]]:scale-75",
       "[&_[data-key=filter_radio_group_label_class]]:text-xs"
     ]
   end
