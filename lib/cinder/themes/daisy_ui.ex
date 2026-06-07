@@ -17,7 +17,7 @@ defmodule Cinder.Themes.DaisyUI do
   set :controls_class, "card card-sm card-border bg-base-100 mb-4"
 
   set :table_toolbar_class,
-      "sticky top-16 z-40 mb-3 flex h-12 flex-nowrap items-center gap-3 overflow-visible border-b border-base-300 bg-base-100/95 px-3 py-1 shadow-sm backdrop-blur"
+      "cinder-sticky-toolbar sticky top-16 z-40 mb-3 flex h-12 flex-nowrap items-center gap-3 overflow-visible border-b border-base-300 bg-base-100/95 px-3 py-1 shadow-sm backdrop-blur"
 
   set :table_wrapper_class, "card card-border bg-base-100"
   set :table_class, "table table-zebra w-full"

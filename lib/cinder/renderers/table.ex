@@ -241,7 +241,7 @@ defmodule Cinder.Renderers.Table do
   end
 
   defp thead_class(%{sticky_toolbar: true, theme: theme}) do
-    [theme.thead_class, "sticky top-28 z-30 bg-base-100 shadow-sm"]
+    [theme.thead_class, "cinder-sticky-thead sticky top-28 z-30 bg-base-100 shadow-sm"]
   end
 
   defp thead_class(%{theme: theme}), do: theme.thead_class
