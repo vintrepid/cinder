@@ -57,6 +57,17 @@ defmodule Cinder.Filters.BooleanTest do
 
       assert html =~ "checked"
     end
+
+    test "uses a value-keyed radio group for clearing stale checked state" do
+      column = %{field: "active", filter_options: []}
+      theme = Cinder.Theme.default()
+
+      rendered = Boolean.render(column, "", theme, %{table_id: "users"})
+      html = Phoenix.HTML.Safe.to_iodata(rendered) |> IO.iodata_to_binary()
+
+      assert html =~ ~s(id="users-filter-active-radio-group-empty")
+      refute html =~ "checked"
+    end
   end
 
   describe "Boolean filter build_query/3 for array fields" do

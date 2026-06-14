@@ -22,7 +22,7 @@ defmodule Cinder.Filters.RadioGroup do
   import Cinder.Filter
 
   @impl true
-  def render(column, current_value, theme, _assigns) do
+  def render(column, current_value, theme, assigns) do
     current_radio_value = current_value || ""
     filter_options = Map.get(column, :filter_options, [])
     options = get_option(filter_options, :options, [])
@@ -31,11 +31,16 @@ defmodule Cinder.Filters.RadioGroup do
       column: column,
       current_radio_value: current_radio_value,
       options: options,
-      theme: theme
+      theme: theme,
+      group_id: radio_group_id(Map.get(assigns, :table_id), column.field, current_radio_value)
     }
 
     ~H"""
-    <div class={@theme.filter_radio_group_container_class} data-key="filter_radio_group_container_class">
+    <div
+      id={@group_id}
+      class={@theme.filter_radio_group_container_class}
+      data-key="filter_radio_group_container_class"
+    >
       <.option
         :for={{label, value} <- @options}
         name={field_name(@column.field)}
@@ -66,10 +71,23 @@ defmodule Cinder.Filters.RadioGroup do
         aria-label={@label}
         data-key="filter_radio_group_radio_class"
       />
-      <span class={@theme.filter_radio_group_label_class} data-key="filter_radio_group_label_class">{@label}</span>
+      <span class={@theme.filter_radio_group_label_class} data-key="filter_radio_group_label_class">
+        {@label}
+      </span>
     </label>
     """
   end
+
+  defp radio_group_id(nil, field, current_value) do
+    "cinder-filter-#{sanitized_field_name(field)}-radio-group-#{value_key(current_value)}"
+  end
+
+  defp radio_group_id(table_id, field, current_value) do
+    "#{filter_id(table_id, field)}-radio-group-#{value_key(current_value)}"
+  end
+
+  defp value_key(""), do: "empty"
+  defp value_key(value), do: sanitized_field_name(to_string(value))
 
   @impl true
   def process(raw_value, _column) when is_binary(raw_value) do

@@ -159,6 +159,31 @@ defmodule Cinder.Filters.RadioGroupTest do
       assert html =~ "checked"
     end
 
+    test "keys the radio group by current value" do
+      column = %{
+        field: "status",
+        filter_options: [options: [{"Active", "active"}, {"Archived", "archived"}]]
+      }
+
+      theme = Cinder.Theme.default()
+
+      selected =
+        column
+        |> RadioGroup.render("active", theme, %{table_id: "users"})
+        |> Phoenix.HTML.Safe.to_iodata()
+        |> IO.iodata_to_binary()
+
+      cleared =
+        column
+        |> RadioGroup.render("", theme, %{table_id: "users"})
+        |> Phoenix.HTML.Safe.to_iodata()
+        |> IO.iodata_to_binary()
+
+      assert selected =~ ~s(id="users-filter-status-radio-group-active")
+      assert cleared =~ ~s(id="users-filter-status-radio-group-empty")
+      refute cleared =~ "checked"
+    end
+
     test "renders with no options" do
       column = %{field: "status", filter_options: [options: []]}
       theme = Cinder.Theme.default()
