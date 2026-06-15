@@ -261,7 +261,7 @@ defmodule Cinder.Table.SortCycleTest do
       # Explicit :additive mode should behave same as 3-arity version
       result = QueryBuilder.toggle_sort_with_cycle(current_sort, "name", nil, :additive)
 
-      assert result == [{"name", :asc}, {"other_field", :desc}]
+      assert result == [{"other_field", :desc}, {"name", :asc}]
     end
 
     test "exclusive mode replaces existing sorts when adding new column" do

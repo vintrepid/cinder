@@ -787,7 +787,7 @@ defmodule Cinder.QueryBuilder do
   end
 
   defp add_sort(_current_sort, key, direction, :exclusive), do: [{key, direction}]
-  defp add_sort(current_sort, key, direction, :additive), do: [{key, direction} | current_sort]
+  defp add_sort(current_sort, key, direction, :additive), do: current_sort ++ [{key, direction}]
 
   defp remove_sort(_current_sort, _key, :exclusive), do: []
 
