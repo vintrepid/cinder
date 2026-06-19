@@ -62,6 +62,7 @@ defmodule Cinder.Renderers.Table do
           selected_ids={@selected_ids}
           data={@data}
           id_field={@id_field}
+          filtered_count={Map.get(assigns, :filtered_count)}
           bulk_action_slots={@bulk_action_slots}
           theme={@theme}
           myself={@myself}
@@ -217,6 +218,7 @@ defmodule Cinder.Renderers.Table do
         selected_ids={@selected_ids}
         data={@data}
         id_field={@id_field}
+        filtered_count={Map.get(assigns, :filtered_count)}
         bulk_action_slots={@bulk_action_slots}
         theme={@theme}
         myself={@myself}

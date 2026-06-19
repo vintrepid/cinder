@@ -221,6 +221,34 @@ defmodule Cinder.QueryBuilder do
     end
   end
 
+  @doc false
+  # Reads only the identifier field from a prepared Cinder query, without
+  # pagination. Used by selection UI when the user explicitly asks to select all
+  # filtered records, including records not visible on the current page.
+  def select_ids(%Ash.Query{} = prepared_query, id_field, options) do
+    ash_opts = build_read_opts(options)
+
+    with {:ok, field} <- normalize_id_field(id_field) do
+      prepared_query
+      |> Ash.Query.select([field])
+      |> Ash.read(ash_opts)
+      |> case do
+        {:ok, results} ->
+          ids =
+            results
+            |> page_results()
+            |> Enum.map(&Map.get(&1, field))
+            |> Enum.reject(&is_nil/1)
+            |> Enum.map(&to_string/1)
+
+          {:ok, ids}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
   # Prepare the query for execution by ensuring it has an action set.
   #
   # If the caller supplied an already-prepared `Ash.Query` (`query.action != nil`),
@@ -328,6 +356,23 @@ defmodule Cinder.QueryBuilder do
         {:error, query_error}
     end
   end
+
+  defp normalize_id_field(field) when is_atom(field), do: {:ok, field}
+
+  defp normalize_id_field(field) when is_binary(field) do
+    if String.contains?(field, [".", "[", "]"]) do
+      {:error, {:unsupported_selection_id_field, field}}
+    else
+      {:ok, String.to_existing_atom(field)}
+    end
+  rescue
+    ArgumentError -> {:error, {:unknown_selection_id_field, field}}
+  end
+
+  defp normalize_id_field(field), do: {:error, {:unsupported_selection_id_field, field}}
+
+  defp page_results(%{results: results}), do: results
+  defp page_results(results) when is_list(results), do: results
 
   # Helper for consistent error logging
   defp log_query_error(resource, query_error, current_page, page_size, ash_opts) do

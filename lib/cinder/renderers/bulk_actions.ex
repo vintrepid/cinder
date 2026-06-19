@@ -25,8 +25,9 @@ defmodule Cinder.Renderers.BulkActions do
   def render(assigns) do
     selectable = Map.get(assigns, :selectable, false)
     slots = Map.get(assigns, :bulk_action_slots, [])
+    selected_ids = Map.get(assigns, :selected_ids, MapSet.new())
 
-    if selectable and slots != [] do
+    if selectable and (slots != [] or MapSet.size(selected_ids) > 0) do
       render_bulk_actions(assigns)
     else
       ~H""
@@ -43,17 +44,38 @@ defmodule Cinder.Renderers.BulkActions do
       |> assign(:selected_ids, selected_ids)
       |> assign(:selected_count, MapSet.size(selected_ids))
       |> assign(:off_page_selected_count, off_page_selected_count(assigns, selected_ids))
+      |> assign(:page_count, page_count(assigns))
+      |> assign(:filtered_count, Map.get(assigns, :filtered_count))
+      |> assign(:all_page_selected?, all_page_selected?(assigns, selected_ids))
+      |> assign(:show_select_filtered?, show_select_filtered?(assigns, selected_ids))
       |> assign(:slots, slots)
       |> assign(:container_class, container_class(assigns.theme, compact))
       |> assign(:button_class, button_class(assigns.theme, compact))
 
     ~H"""
     <div class={@container_class} data-key="bulk_actions_container_class">
-      <span :if={@off_page_selected_count > 0} class="text-sm opacity-70">
-        {@selected_count} selected, {@off_page_selected_count} off this page
-      </span>
+      <div class="flex flex-wrap items-center gap-2 text-sm opacity-80">
+        <span>
+          <%= if @all_page_selected? and @page_count > 0 do %>
+            All {@page_count} on this page selected.
+          <% else %>
+            {@selected_count} selected.
+          <% end %>
+        </span>
+        <span :if={@off_page_selected_count > 0}>
+          {@off_page_selected_count} selected off this page.
+        </span>
+        <button
+          :if={@show_select_filtered?}
+          type="button"
+          phx-click={JS.push("select_all_filtered", target: @myself)}
+          class="link link-primary"
+        >
+          Select all {@filtered_count} filtered records
+        </button>
+      </div>
       <button
-        :if={@off_page_selected_count > 0}
+        :if={@selected_count > 0}
         type="button"
         phx-click={JS.push("clear_selection", target: @myself)}
         class={[
@@ -162,4 +184,26 @@ defmodule Cinder.Renderers.BulkActions do
   end
 
   defp page_ids(_data, _id_field), do: MapSet.new()
+
+  defp page_count(assigns) do
+    assigns
+    |> Map.get(:data, [])
+    |> case do
+      data when is_list(data) -> length(data)
+      _ -> 0
+    end
+  end
+
+  defp all_page_selected?(assigns, selected_ids) do
+    page_ids = page_ids(Map.get(assigns, :data), Map.get(assigns, :id_field, :id))
+    MapSet.size(page_ids) > 0 and MapSet.subset?(page_ids, selected_ids)
+  end
+
+  defp show_select_filtered?(assigns, selected_ids) do
+    filtered_count = Map.get(assigns, :filtered_count)
+    page_count = page_count(assigns)
+
+    is_integer(filtered_count) and filtered_count > page_count and
+      all_page_selected?(assigns, selected_ids) and MapSet.size(selected_ids) < filtered_count
+  end
 end

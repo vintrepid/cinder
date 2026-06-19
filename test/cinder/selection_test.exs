@@ -15,6 +15,11 @@ defmodule Cinder.SelectionTest do
       selectable: false,
       selected_ids: MapSet.new(),
       on_selection_change: nil,
+      actor: nil,
+      tenant: nil,
+      scope: nil,
+      query_opts: [],
+      current_query: nil,
       data: []
     }
 
@@ -198,6 +203,22 @@ defmodule Cinder.SelectionTest do
                          action: :select_all,
                          selected_count: 2
                        }}
+    end
+  end
+
+  describe "select_all_filtered event" do
+    test "is a no-op when the filtered query has not loaded" do
+      socket =
+        make_socket(%{
+          id: "test-table",
+          selectable: true,
+          selected_ids: MapSet.new(["user-1"])
+        })
+
+      {:noreply, updated_socket} =
+        LiveComponent.handle_event("select_all_filtered", %{}, socket)
+
+      assert updated_socket.assigns.selected_ids == MapSet.new(["user-1"])
     end
   end
 

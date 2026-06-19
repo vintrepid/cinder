@@ -450,6 +450,32 @@ defmodule Cinder.LiveComponent do
   end
 
   @impl true
+  def handle_event("select_all_filtered", _params, socket) do
+    case select_filtered_ids(socket) do
+      {:ok, ids} ->
+        new_selected = MapSet.union(socket.assigns.selected_ids, MapSet.new(ids))
+
+        socket =
+          socket
+          |> assign(:selected_ids, new_selected)
+          |> restream_all_rows()
+          |> notify_selection_change(:select_all_filtered)
+
+        {:noreply, socket}
+
+      {:error, :filtered_query_not_loaded} ->
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Cinder: failed to select all filtered records for #{inspect(socket.assigns.id)}: #{inspect(reason)}"
+        )
+
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("clear_selection", _params, socket) do
     socket =
       socket
@@ -645,6 +671,8 @@ defmodule Cinder.LiveComponent do
   defp maybe_notify_query_change(socket, nil), do: socket
 
   defp maybe_notify_query_change(socket, query) do
+    socket = assign(socket, :current_query, query)
+
     if event_name = socket.assigns[:on_query_change] do
       send(self(), {event_name, %{query: query, id: socket.assigns.id}})
     end
@@ -697,6 +725,7 @@ defmodule Cinder.LiveComponent do
     |> assign(:data, page.results)
     |> maybe_stream(:data, page.results, reset: true)
     |> assign(:page, page)
+    |> assign(:filtered_count, filtered_count(page))
     # Update keyset cursors for navigation (only relevant in keyset mode)
     |> maybe_update_keyset_cursors(page)
   end
@@ -719,6 +748,7 @@ defmodule Cinder.LiveComponent do
     |> assign(:data, [])
     |> maybe_stream(:data, [], reset: true)
     |> assign(:page, nil)
+    |> assign(:filtered_count, 0)
   end
 
   defp handle_result({:exit, reason}, socket) do
@@ -739,7 +769,23 @@ defmodule Cinder.LiveComponent do
     |> assign(:data, [])
     |> maybe_stream(:data, [], reset: true)
     |> assign(:page, nil)
+    |> assign(:filtered_count, 0)
   end
+
+  defp select_filtered_ids(%{assigns: %{current_query: %Ash.Query{} = query}} = socket) do
+    Cinder.QueryBuilder.select_ids(query, socket.assigns[:id_field] || :id, [
+      actor: socket.assigns[:actor],
+      tenant: socket.assigns[:tenant],
+      scope: Map.get(socket.assigns, :scope),
+      query_opts: socket.assigns[:query_opts] || []
+    ])
+  end
+
+  defp select_filtered_ids(_socket), do: {:error, :filtered_query_not_loaded}
+
+  defp filtered_count(%{count: count}) when is_integer(count), do: count
+  defp filtered_count(%{results: results}) when is_list(results), do: length(results)
+  defp filtered_count(_page), do: nil
 
   defp maybe_update_keyset_cursors(socket, %Ash.Page.Keyset{} = page) do
     results = page.results
@@ -933,6 +979,8 @@ defmodule Cinder.LiveComponent do
     |> assign(:query_opts, assigns[:query_opts] || [])
     |> assign_new(:action, fn -> nil end)
     |> assign_new(:page, fn -> nil end)
+    |> assign_new(:current_query, fn -> nil end)
+    |> assign_new(:filtered_count, fn -> nil end)
     |> assign(:user_has_interacted, Map.get(socket.assigns, :user_has_interacted, false))
     # Keyset pagination state
     |> assign(:pagination_mode, pagination_mode)
