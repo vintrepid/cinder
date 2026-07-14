@@ -10,12 +10,12 @@ defmodule Cinder.Renderers.Table do
   ## DOM structure
 
       <tbody id="{table-id}-stream" phx-update="stream">
-        <tr id="{table-id}-empty" class="only:table-row hidden">...</tr>
         <tr id="{dom_id}" :for={{dom_id, item} <- @streams.data}>...</tr>
       </tbody>
+      <tbody :if={@data == []}>...</tbody>
 
-  The empty state row uses the CSS `:only-child` pseudo-class to show itself
-  only when the stream container has no data rows.
+  Empty and error states render outside the stream container so LiveView can
+  replace and reorder stream rows without persistent static children.
   """
 
   use Phoenix.Component
@@ -25,6 +25,7 @@ defmodule Cinder.Renderers.Table do
 
   alias Cinder.Renderers.BulkActions
   alias Cinder.Renderers.Pagination
+  alias Cinder.Renderers.SortIcon
 
   @doc """
   Renders the table layout.
@@ -95,7 +96,7 @@ defmodule Cinder.Renderers.Table do
                      phx-target={@myself}>
                      {column.label}
                      <span class={@theme.sort_indicator_class} data-key="sort_indicator_class">
-                       <.sort_arrow sort_direction={Cinder.QueryBuilder.get_sort_direction(@sort_by, column.field)} theme={@theme} loading={@loading} />
+                       <SortIcon.sort_icon sort_direction={Cinder.QueryBuilder.get_sort_direction(@sort_by, column.field)} theme={@theme} loading={@loading} />
                      </span>
                 </div>
                 <div :if={not column.sortable}>
@@ -105,20 +106,51 @@ defmodule Cinder.Renderers.Table do
             </tr>
           </thead>
           <tbody id={"#{@id}-stream"} phx-update="stream" class={[@theme.tbody_class, (@loading && "opacity-75" || "")]} data-key="tbody_class">
-            <!-- Error State (non-stream item, persists in container) -->
-            <tr :if={@error and not @loading} id={"#{@id}-error"}>
-              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="error_class">
-                <%= if has_slot?(assigns, :error_slot) do %>
-                  {render_slot(@error_slot)}
-                <% else %>
-                  <div class={@theme.error_container_class} data-key="error_container_class">
-                    <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
-                  </div>
-                <% end %>
-              </td>
-            </tr>
-            <!-- Empty State (CSS :only-child shows when stream is empty) -->
-            <tr :if={not @loading and not @error} id={"#{@id}-empty"} class="only:table-row hidden">
+            <!-- Stream rows: only changed items are patched -->
+            <%= if Map.has_key?(assigns, :streams) do %>
+              <tr
+                :for={{dom_id, item} <- @streams.data}
+                :if={not @error}
+                id={dom_id}
+                class={get_row_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, @theme)}
+                data-item-id={to_string(Map.get(item, @id_field))}
+                data-key="row_class"
+                phx-click={row_click_action(@row_click, @selectable, item, @id_field, @myself)}
+              >
+                <.data_cells
+                  item={item}
+                  selectable={@selectable}
+                  selected_ids={@selected_ids}
+                  id_field={@id_field}
+                  myself={@myself}
+                  theme={@theme}
+                  columns={@columns}
+                />
+              </tr>
+            <% else %>
+              <tr
+                :for={{dom_id, item} <- table_rows(assigns)}
+                :if={not @error}
+                id={dom_id}
+                class={get_row_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, @theme)}
+                data-item-id={to_string(Map.get(item, @id_field))}
+                data-key="row_class"
+                phx-click={row_click_action(@row_click, @selectable, item, @id_field, @myself)}
+              >
+                <.data_cells
+                  item={item}
+                  selectable={@selectable}
+                  selected_ids={@selected_ids}
+                  id_field={@id_field}
+                  myself={@myself}
+                  theme={@theme}
+                  columns={@columns}
+                />
+              </tr>
+            <% end %>
+          </tbody>
+          <tbody :if={not @loading and not @error and @data == []}>
+            <tr id={"#{@id}-empty"}>
               <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="empty_class">
                 <%= if has_slot?(assigns, :empty_slot) do %>
                   {render_slot(@empty_slot, empty_context(assigns))}
@@ -127,27 +159,17 @@ defmodule Cinder.Renderers.Table do
                 <% end %>
               </td>
             </tr>
-            <!-- Stream rows: only changed items are patched -->
-            <tr :for={{dom_id, item} <- table_rows(assigns)}
-                :if={not @error}
-                id={dom_id}
-                class={get_row_classes(@theme.row_class, @row_click, @selectable, @selected_ids, item, @id_field, @theme)}
-                data-item-id={to_string(Map.get(item, @id_field))}
-                data-key="row_class"
-                phx-click={row_click_action(@row_click, @selectable, item, @id_field, @myself)}>
-              <td :if={@selectable} class={[@theme.td_class, "w-10"]} data-key="td_class">
-                <input
-                  type="checkbox"
-                  checked={item_selected?(@selected_ids, item, @id_field)}
-                  phx-click="toggle_select"
-                  phx-value-id={to_string(Map.get(item, @id_field))}
-                  phx-target={@myself}
-                  class={@theme.selection_checkbox_class}
-                  data-key="selection_checkbox_class"
-                />
-              </td>
-              <td :for={column <- @columns} class={[@theme.td_class, column.class]} data-key="td_class">
-                {render_slot(column.slot, item)}
+          </tbody>
+          <tbody :if={@error and not @loading}>
+            <tr id={"#{@id}-error"}>
+              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="error_class">
+                <%= if has_slot?(assigns, :error_slot) do %>
+                  {render_slot(@error_slot)}
+                <% else %>
+                  <div class={@theme.error_container_class} data-key="error_container_class">
+                    <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
+                  </div>
+                <% end %>
               </td>
             </tr>
           </tbody>
@@ -181,6 +203,25 @@ defmodule Cinder.Renderers.Table do
         id_suffix="bottom"
       />
     </div>
+    """
+  end
+
+  defp data_cells(assigns) do
+    ~H"""
+    <td :if={@selectable} class={[@theme.td_class, "w-10"]} data-key="td_class">
+      <input
+        type="checkbox"
+        checked={item_selected?(@selected_ids, @item, @id_field)}
+        phx-click="toggle_select"
+        phx-value-id={to_string(Map.get(@item, @id_field))}
+        phx-target={@myself}
+        class={@theme.selection_checkbox_class}
+        data-key="selection_checkbox_class"
+      />
+    </td>
+    <td :for={column <- @columns} class={[@theme.td_class, column.class]} data-key="td_class">
+      {render_slot(column.slot, @item)}
+    </td>
     """
   end
 
@@ -248,8 +289,6 @@ defmodule Cinder.Renderers.Table do
 
   defp thead_class(%{theme: theme}), do: theme.thead_class
 
-  defp table_rows(%{streams: %{data: data}}), do: data
-
   defp table_rows(assigns) do
     id = Map.get(assigns, :id, "cinder-table")
     id_field = Map.get(assigns, :id_field, :id)
@@ -260,47 +299,25 @@ defmodule Cinder.Renderers.Table do
   end
 
   # ============================================================================
-  # HELPER COMPONENTS
-  # ============================================================================
-
-  defp sort_arrow(assigns) do
-    ~H"""
-    <span class={Map.get(@theme, :sort_arrow_wrapper_class, "inline-block ml-1")}>
-      <%= case @sort_direction do %>
-        <% direction when direction in [:asc, :asc_nils_first, :asc_nils_last] -> %>
-          <.icon
-            name={Map.get(@theme, :sort_asc_icon_name, "hero-chevron-up")}
-            class={[Map.get(@theme, :sort_asc_icon_class, "w-3 h-3 inline"), (@loading && "animate-pulse" || "")]}
-          />
-        <% direction when direction in [:desc, :desc_nils_first, :desc_nils_last] -> %>
-          <.icon
-            name={Map.get(@theme, :sort_desc_icon_name, "hero-chevron-down")}
-            class={[Map.get(@theme, :sort_desc_icon_class, "w-3 h-3 inline"), (@loading && "animate-pulse" || "")]}
-          />
-        <% _ -> %>
-          <.icon
-            name={Map.get(@theme, :sort_none_icon_name, "hero-chevron-up-down")}
-            class={Map.get(@theme, :sort_none_icon_class, "w-3 h-3 inline opacity-30")}
-          />
-      <% end %>
-    </span>
-    """
-  end
-
-  defp icon(%{name: _, class: _} = assigns) do
-    ~H"""
-    <span class={[@name, @class]} />
-    """
-  end
-
-  # ============================================================================
   # HELPER FUNCTIONS
   # ============================================================================
 
-  defp get_row_classes(base_classes, row_click, selectable, selected_ids, item, id_field, theme) do
+  defp get_row_classes(
+         base_classes,
+         user_item_class,
+         row_click,
+         selectable,
+         selected_ids,
+         item,
+         id_field,
+         theme
+       ) do
+    # Merge the per-item user class onto the theme's base row class
+    base = [base_classes, resolve_item_class(user_item_class, item)]
+
     # Add cursor-pointer if row is clickable (either via row_click or selectable without row_click)
     clickable = row_click != nil or (selectable and row_click == nil)
-    classes = if clickable, do: [base_classes, "cursor-pointer"], else: [base_classes]
+    classes = if clickable, do: base ++ ["cursor-pointer"], else: base
 
     if selectable and item_selected?(selected_ids, item, id_field) do
       classes ++ [theme.selected_row_class]

@@ -468,9 +468,6 @@ defmodule Cinder.QueryBuilder do
   def apply_standard_filter(query, key, filter_config, _column) do
     %{type: type} = filter_config
 
-    # Convert URL-safe field notation to bracket notation
-    field_name = Cinder.Filter.Helpers.field_notation_from_url_safe(key)
-
     # Get the filter module from registry (includes both built-in and custom)
     case Cinder.Filters.Registry.get_filter(type) do
       nil ->
@@ -480,7 +477,7 @@ defmodule Cinder.QueryBuilder do
 
       filter_module ->
         try do
-          filter_module.build_query(query, field_name, filter_config)
+          filter_module.build_query(query, key, filter_config)
         rescue
           error ->
             require Logger
@@ -598,11 +595,9 @@ defmodule Cinder.QueryBuilder do
       value |> to_string() |> String.downcase() |> String.contains?(lowered)
     end)
     |> Enum.flat_map(fn value ->
-      field_name = Cinder.Filter.Helpers.field_notation_from_url_safe(column.field)
-
       # :equals is type-aware — array fields use containment, scalars use ==.
       test_query =
-        Cinder.Filter.Helpers.build_ash_filter(query, field_name, value, :equals)
+        Cinder.Filter.Helpers.build_ash_filter(query, column.field, value, :equals)
 
       if Enum.empty?(test_query.errors) and not is_nil(test_query.filter) do
         [test_query.filter]
@@ -613,13 +608,12 @@ defmodule Cinder.QueryBuilder do
   end
 
   defp build_column_search_conditions(query, column, search_term) do
-    field_name = Cinder.Filter.Helpers.field_notation_from_url_safe(column.field)
     case_insensitive_term = Ash.CiString.new(search_term)
 
     test_query =
       Cinder.Filter.Helpers.build_ash_filter(
         query,
-        field_name,
+        column.field,
         case_insensitive_term,
         :contains
       )
@@ -657,14 +651,11 @@ defmodule Cinder.QueryBuilder do
           query
         end
 
-      # Process sorts individually to handle relationship sorts properly
-      # Convert URL-safe field notation and handle embedded fields with calc expressions
+      # Process sorts individually to handle relationship sorts properly,
+      # giving embedded fields special handling with calc expressions
       Enum.reduce(sort_by, query, fn {field, direction}, acc_query ->
-        # Convert URL-safe embedded field notation (e.g., "settings__a" -> "settings[:a]")
-        converted_field = Cinder.Filter.Helpers.field_notation_from_url_safe(field)
-
         # Parse field to determine if it needs special handling for embedded fields
-        case Cinder.Filter.Helpers.parse_field_notation(converted_field) do
+        case Cinder.Filter.Helpers.parse_field_notation(field) do
           {:embedded, embed_field, field_name} ->
             apply_embedded_sort(acc_query, [], embed_field, [field_name], direction)
 
@@ -678,8 +669,8 @@ defmodule Cinder.QueryBuilder do
             apply_embedded_sort(acc_query, rel_path, embed_field, field_path, direction)
 
           _ ->
-            # Regular fields and relationships - use converted field name directly
-            Ash.Query.sort(acc_query, [{converted_field, direction}])
+            # Regular fields and relationships - use the field name directly
+            Ash.Query.sort(acc_query, [{field, direction}])
         end
       end)
     else
@@ -1104,14 +1095,11 @@ defmodule Cinder.QueryBuilder do
   Supports:
   - Direct fields: "name"
   - Relationship fields: "user.profile.name"
-  - Embedded fields: "profile__first_name" (URL-safe) or "profile[:first_name]" (bracket notation)
+  - Embedded fields: "profile__first_name"
   - Mixed fields: "user.profile__address__street"
   """
   def validate_field_existence(resource, field) when is_binary(field) do
-    # Convert underscore notation to bracket notation first
-    bracket_notation_field = Cinder.Filter.Helpers.field_notation_from_url_safe(field)
-
-    case Cinder.Filter.Helpers.parse_field_notation(bracket_notation_field) do
+    case Cinder.Filter.Helpers.parse_field_notation(field) do
       {:direct, field_name} ->
         field_exists_on_resource?(resource, field_name)
 

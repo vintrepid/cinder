@@ -1,7 +1,7 @@
 defmodule Cinder.MixProject do
   use Mix.Project
 
-  @version "0.14.0"
+  @version "0.15.0"
   @source_url "https://github.com/sevenseacat/cinder"
 
   def project do
@@ -65,6 +65,7 @@ defmodule Cinder.MixProject do
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:maestro_tool, path: "../maestro_tool", only: [:dev, :test]},
       {:mimic, "~> 2.3", only: :test},
+      {:phoenix_test, "~> 0.11", only: :test, runtime: false},
       {:ex_check, "~> 0.16", only: [:dev], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},

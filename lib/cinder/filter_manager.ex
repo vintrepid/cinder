@@ -147,7 +147,7 @@ defmodule Cinder.FilterManager do
 
     ~H"""
     <div :if={@has_content} class={@theme.filter_container_class} data-key="filter_container_class">
-      <form phx-change="filter_change" phx-submit="filter_change" phx-target={@target}>
+      <form id={"#{@table_id}-filters"} phx-change="filter_change" phx-submit="filter_change" phx-target={@target}>
         {render_slot(@controls_slot, @controls_data)}
       </form>
     </div>
@@ -183,7 +183,7 @@ defmodule Cinder.FilterManager do
       />
 
       <div id={"#{@table_id}-filter-body"} class={if(@collapsible and @initially_collapsed, do: "hidden")}>
-        <form phx-change="filter_change" phx-submit="filter_change" phx-target={@target}>
+        <form id={"#{@table_id}-filter-form"} phx-change="filter_change" phx-submit="filter_change" phx-target={@target}>
           <div class={@theme.filter_inputs_class} data-key="filter_inputs_class">
             <Cinder.Controls.render_search
               :if={@controls_data.search != nil}
@@ -219,7 +219,7 @@ defmodule Cinder.FilterManager do
       for={label_for_attr(@column.filter_type, @table_id, @column.field)}
       phx-click={label_click_action(@column.filter_type, @table_id, @column.field)}
       data-key="filter_label_class"
-    >{filter_label_text(@column)}:</label>
+    >{filter_label_text(@column)}</label>
     """
   end
 
@@ -550,9 +550,7 @@ defmodule Cinder.FilterManager do
       # Use explicit label if provided, otherwise humanize the field key
       label =
         Map.get(slot, :label) ||
-          key
-          |> Cinder.Filter.Helpers.field_notation_from_url_safe()
-          |> Cinder.Filter.Helpers.humanize_embedded_field()
+          Cinder.Filter.Helpers.humanize_embedded_field(key)
 
       enhanced_options =
         case filter_type do
@@ -648,11 +646,8 @@ defmodule Cinder.FilterManager do
 
   defp get_ash_attribute(resource, key) do
     try do
-      # Handle embedded field notation by converting URL-safe format to bracket notation
-      converted_key = Cinder.Filter.Helpers.field_notation_from_url_safe(key)
-
       # Parse the field notation to check if it's an embedded field
-      case Cinder.Filter.Helpers.parse_field_notation(converted_key) do
+      case Cinder.Filter.Helpers.parse_field_notation(key) do
         {:embedded, embed_field, field_name} ->
           # Look up the embedded field attribute and then the nested field within it
           get_embedded_attribute(resource, embed_field, field_name)

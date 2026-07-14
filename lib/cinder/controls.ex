@@ -243,7 +243,7 @@ defmodule Cinder.Controls do
     ~H"""
     <div class={@wrapper_class} data-key="filter_input_wrapper_class">
       <div class={@label_class}>
-        <label for={@search.id} class={@theme.filter_label_class} data-key="filter_label_class">{@search.label}:</label>
+        <label for={@search.id} class={@theme.filter_label_class} data-key="filter_label_class">{@search.label}</label>
       </div>
       <div class="flex items-center">
         <div class="flex-1 relative">
@@ -371,14 +371,14 @@ defmodule Cinder.Controls do
           </span>
           {@filters_label}
           <span class={[@theme.filter_count_class, if(@active_filter_count == 0, do: "invisible", else: "")]} data-key="filter_count_class">
-            ({@active_filter_count} {dngettext("cinder", "active", "active", @active_filter_count)})
+            {@active_filter_count} {dngettext("cinder", "active", "active", @active_filter_count)}
           </span>
         </span>
       <% else %>
         <span class={@theme.filter_title_class} data-key="filter_title_class">
           {@filters_label}
           <span class={[@theme.filter_count_class, if(@active_filter_count == 0, do: "invisible", else: "")]} data-key="filter_count_class">
-            ({@active_filter_count} {dngettext("cinder", "active", "active", @active_filter_count)})
+            {@active_filter_count} {dngettext("cinder", "active", "active", @active_filter_count)}
           </span>
         </span>
       <% end %>

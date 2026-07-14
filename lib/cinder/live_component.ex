@@ -773,12 +773,12 @@ defmodule Cinder.LiveComponent do
   end
 
   defp select_filtered_ids(%{assigns: %{current_query: %Ash.Query{} = query}} = socket) do
-    Cinder.QueryBuilder.select_ids(query, socket.assigns[:id_field] || :id, [
+    Cinder.QueryBuilder.select_ids(query, socket.assigns[:id_field] || :id,
       actor: socket.assigns[:actor],
       tenant: socket.assigns[:tenant],
       scope: Map.get(socket.assigns, :scope),
       query_opts: socket.assigns[:query_opts] || []
-    ])
+    )
   end
 
   defp select_filtered_ids(_socket), do: {:error, :filtered_query_not_loaded}
@@ -971,7 +971,6 @@ defmodule Cinder.LiveComponent do
     |> assign(:loading, false)
     |> assign(:error, assigns[:error] || false)
     |> assign(:data, assigns[:data] || [])
-    |> maybe_stream(:data, assigns[:data] || [], reset: true)
     |> assign(:sort_by, assigns[:sort_by] || extract_initial_sorts(assigns))
     |> assign(:filters, assigns[:filters] || %{})
     |> assign(:search_term, assigns[:search_term] || "")

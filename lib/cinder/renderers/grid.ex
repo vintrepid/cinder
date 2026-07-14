@@ -70,6 +70,7 @@ defmodule Cinder.Renderers.Grid do
           sort_label={@sort_label}
           theme={@theme}
           myself={@myself}
+          loading={@loading}
         />
       </div>
 
@@ -86,55 +87,64 @@ defmodule Cinder.Renderers.Grid do
 
       <!-- Grid Items Container (stream-backed) -->
       <div id={"#{@id}-stream"} phx-update="stream" class={@grid_container_class} data-key="grid_container_class">
-        <!-- Empty State (CSS :only-child shows when stream is empty) -->
-        <div :if={not @loading and not @error} id={"#{@id}-empty"} class={["only:block hidden", @theme.empty_class, "col-span-full"]} data-key="empty_class">
-          <%= if has_slot?(assigns, :empty_slot) do %>
-            {render_slot(@empty_slot, empty_context(assigns))}
-          <% else %>
-            {@empty_message}
-          <% end %>
-        </div>
-        <!-- Error State -->
-        <div :if={@error and not @loading} id={"#{@id}-error"} class={[@theme.empty_class, "col-span-full"]} data-key="error_class">
-          <%= if has_slot?(assigns, :error_slot) do %>
-            {render_slot(@error_slot)}
-          <% else %>
-            <div class={@theme.error_container_class} data-key="error_container_class">
-              <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
-            </div>
-          <% end %>
-        </div>
         <%= if @has_item_slot and not @error do %>
-          <div
-            :for={{dom_id, item} <- grid_rows(assigns)}
-            id={dom_id}
-            class={get_item_classes_with_selection(@grid_item_class, Map.get(assigns, :selectable, false), Map.get(assigns, :selected_ids, MapSet.new()), item, Map.get(assigns, :id_field, :id), @item_click, @theme)}
-            data-key={@grid_item_data_key}
-            phx-click={item_click_action(@item_click, Map.get(assigns, :selectable, false), item, Map.get(assigns, :id_field, :id), @myself)}
-          >
+          <%= if Map.has_key?(assigns, :streams) do %>
             <div
-              :if={Map.get(assigns, :selectable, false)}
-              class={@theme.grid_selection_overlay_class}
-              data-key="grid_selection_overlay_class"
+              :for={{dom_id, item} <- @streams.data}
+              id={dom_id}
+              class={get_item_classes_with_selection(@grid_item_class, Map.get(assigns, :item_class), Map.get(assigns, :selectable, false), Map.get(assigns, :selected_ids, MapSet.new()), item, Map.get(assigns, :id_field, :id), @item_click, @theme)}
+              data-key={@grid_item_data_key}
+              phx-click={item_click_action(@item_click, Map.get(assigns, :selectable, false), item, Map.get(assigns, :id_field, :id), @myself)}
             >
-              <input
-                type="checkbox"
-                checked={item_selected?(Map.get(assigns, :selected_ids, MapSet.new()), item, Map.get(assigns, :id_field, :id))}
-                phx-click="toggle_select"
-                phx-value-id={to_string(Map.get(item, Map.get(assigns, :id_field, :id)))}
-                phx-target={@myself}
-                class={@theme.selection_checkbox_class}
-                data-key="selection_checkbox_class"
+              <.grid_item_content
+                item={item}
+                item_slot={@item_slot}
+                selectable={Map.get(assigns, :selectable, false)}
+                selected_ids={Map.get(assigns, :selected_ids, MapSet.new())}
+                id_field={Map.get(assigns, :id_field, :id)}
+                myself={@myself}
+                theme={@theme}
               />
             </div>
-            {render_slot(@item_slot, item)}
-          </div>
+          <% else %>
+            <div
+              :for={{dom_id, item} <- grid_rows(assigns)}
+              id={dom_id}
+              class={get_item_classes_with_selection(@grid_item_class, Map.get(assigns, :item_class), Map.get(assigns, :selectable, false), Map.get(assigns, :selected_ids, MapSet.new()), item, Map.get(assigns, :id_field, :id), @item_click, @theme)}
+              data-key={@grid_item_data_key}
+              phx-click={item_click_action(@item_click, Map.get(assigns, :selectable, false), item, Map.get(assigns, :id_field, :id), @myself)}
+            >
+              <.grid_item_content
+                item={item}
+                item_slot={@item_slot}
+                selectable={Map.get(assigns, :selectable, false)}
+                selected_ids={Map.get(assigns, :selected_ids, MapSet.new())}
+                id_field={Map.get(assigns, :id_field, :id)}
+                myself={@myself}
+                theme={@theme}
+              />
+            </div>
+          <% end %>
+        <% end %>
+      </div>
+      <div :if={not @loading and not @error and @has_item_slot and @data == []} id={"#{@id}-empty"} class={[@theme.empty_class, "col-span-full"]} data-key="empty_class">
+        <%= if has_slot?(assigns, :empty_slot) do %>
+          {render_slot(@empty_slot, empty_context(assigns))}
         <% else %>
-          <!-- No item slot provided - render message -->
-          <div :if={not @loading} id={"#{@id}-no-template"} class={@theme.empty_class} data-key="empty_class">
-            No item template provided. Add an &lt;:item&gt; slot to render items.
+          {@empty_message}
+        <% end %>
+      </div>
+      <div :if={@error and not @loading} id={"#{@id}-error"} class={[@theme.empty_class, "col-span-full"]} data-key="error_class">
+        <%= if has_slot?(assigns, :error_slot) do %>
+          {render_slot(@error_slot)}
+        <% else %>
+          <div class={@theme.error_container_class} data-key="error_container_class">
+            <span class={@theme.error_message_class} data-key="error_message_class">{@error_message}</span>
           </div>
         <% end %>
+      </div>
+      <div :if={not @loading and not @has_item_slot} id={"#{@id}-no-template"} class={@theme.empty_class} data-key="empty_class">
+        No item template provided. Add an &lt;:item&gt; slot to render items.
       </div>
 
       <!-- Loading indicator -->
@@ -166,7 +176,26 @@ defmodule Cinder.Renderers.Grid do
     """
   end
 
-  defp grid_rows(%{streams: %{data: data}}), do: data
+  defp grid_item_content(assigns) do
+    ~H"""
+    <div
+      :if={@selectable}
+      class={@theme.grid_selection_overlay_class}
+      data-key="grid_selection_overlay_class"
+    >
+      <input
+        type="checkbox"
+        checked={item_selected?(@selected_ids, @item, @id_field)}
+        phx-click="toggle_select"
+        phx-value-id={to_string(Map.get(@item, @id_field))}
+        phx-target={@myself}
+        class={@theme.selection_checkbox_class}
+        data-key="selection_checkbox_class"
+      />
+    </div>
+    {render_slot(@item_slot, @item)}
+    """
+  end
 
   defp grid_rows(assigns) do
     id = Map.get(assigns, :id, "cinder-grid")
@@ -242,6 +271,7 @@ defmodule Cinder.Renderers.Grid do
 
   defp get_item_classes_with_selection(
          base_class,
+         user_item_class,
          selectable,
          selected_ids,
          item,
@@ -249,7 +279,8 @@ defmodule Cinder.Renderers.Grid do
          item_click,
          theme
        ) do
-    classes = [base_class]
+    # Merge the per-item user class onto the theme's base item class
+    classes = [base_class, resolve_item_class(user_item_class, item)]
 
     # Add cursor-pointer if item is clickable (either via item_click or selectable without item_click)
     clickable = item_click != nil or (selectable and item_click == nil)

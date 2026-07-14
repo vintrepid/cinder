@@ -139,11 +139,11 @@ defmodule Cinder.Table.SortCycleTest do
 
       # Add new sort
       sort1 = QueryBuilder.toggle_sort_with_cycle(current_sort, "created_at", cycle)
-      assert sort1 == [{"created_at", :desc_nils_last}, {"other_field", :desc}]
+      assert sort1 == [{"other_field", :desc}, {"created_at", :desc_nils_last}]
 
       # Cycle the new sort
       sort2 = QueryBuilder.toggle_sort_with_cycle(sort1, "created_at", cycle)
-      assert sort2 == [{"created_at", :asc_nils_first}, {"other_field", :desc}]
+      assert sort2 == [{"other_field", :desc}, {"created_at", :asc_nils_first}]
 
       # Remove the cycled sort
       sort3 = QueryBuilder.toggle_sort_with_cycle(sort2, "created_at", cycle)
@@ -546,7 +546,7 @@ defmodule Cinder.Table.SortCycleTest do
 
       # Click "Name" column while priority is sorted - should add standard sort
       sort6 = QueryBuilder.toggle_sort_with_cycle(sort5, "name", name_col.sort_cycle)
-      assert sort6 == [{"name", :asc}, {"priority", :low}]
+      assert sort6 == [{"priority", :low}, {"name", :asc}]
 
       # This demonstrates that custom cycles work alongside standard sorting
       # and that multiple columns can be sorted with different cycle behaviors
