@@ -18,11 +18,13 @@ defmodule Cinder.FilterManager do
           | :select
           | :multi_select
           | :multi_checkboxes
+          | :date
           | :date_range
           | :number_range
           | :boolean
           | :radio_group
           | :checkbox
+          | :autocomplete
   @type filter_value ::
           String.t()
           | [String.t()]
@@ -225,7 +227,7 @@ defmodule Cinder.FilterManager do
 
   defp filter_label_text(column) do
     case Keyword.get(column.filter_options || [], :label) do
-      nil -> column.label
+      empty when empty in [nil, ""] -> column.label
       label -> label
     end
   end

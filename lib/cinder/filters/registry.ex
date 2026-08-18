@@ -15,6 +15,7 @@ defmodule Cinder.Filters.Registry do
       select: Cinder.Filters.Select,
       multi_select: Cinder.Filters.MultiSelect,
       multi_checkboxes: Cinder.Filters.MultiCheckboxes,
+      date: Cinder.Filters.Date,
       date_range: Cinder.Filters.DateRange,
       number_range: Cinder.Filters.NumberRange,
       boolean: Cinder.Filters.Boolean,
@@ -69,8 +70,9 @@ defmodule Cinder.Filters.Registry do
 
   ## Examples
 
-      iex> Cinder.Filters.Registry.filter_types()
-      [:text, :select, :multi_select, :multi_checkboxes, :date_range, :number_range, :boolean]
+      iex> Cinder.Filters.Registry.filter_types() |> Enum.sort()
+      [:autocomplete, :boolean, :checkbox, :date, :date_range, :multi_checkboxes,
+       :multi_select, :number_range, :radio_group, :select, :text]
   """
   def filter_types do
     Map.keys(all_filters())

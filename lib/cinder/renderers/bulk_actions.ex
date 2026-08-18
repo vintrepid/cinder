@@ -27,7 +27,8 @@ defmodule Cinder.Renderers.BulkActions do
     slots = Map.get(assigns, :bulk_action_slots, [])
     selected_ids = Map.get(assigns, :selected_ids, MapSet.new())
 
-    if selectable and (slots != [] or MapSet.size(selected_ids) > 0) do
+    if Cinder.Selection.enabled?(selectable) and
+         (slots != [] or MapSet.size(selected_ids) > 0) do
       render_bulk_actions(assigns)
     else
       ~H""

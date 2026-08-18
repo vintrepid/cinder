@@ -26,6 +26,7 @@ defmodule Cinder.Renderers.Table do
   alias Cinder.Renderers.BulkActions
   alias Cinder.Renderers.Pagination
   alias Cinder.Renderers.SortIcon
+  alias Cinder.Selection
 
   @doc """
   Renders the table layout.
@@ -75,12 +76,12 @@ defmodule Cinder.Renderers.Table do
         <table class={@theme.table_class} data-key="table_class">
           <thead class={thead_class(assigns)} data-key="thead_class">
             <tr class={@theme.header_row_class} data-key="header_row_class">
-              <th :if={@selectable} class={[@theme.th_class, "w-10"]} data-key="th_class">
+              <th :if={Selection.enabled?(@selectable)} class={[@theme.th_class, "w-10"]} data-key="th_class">
                 <input
                   id={"#{@id}-select-all-page"}
                   type="checkbox"
-                  checked={all_page_selected?(@selected_ids, @data, @id_field)}
-                  data-indeterminate={page_selection_indeterminate(@selected_ids, @data, @id_field)}
+                  checked={all_page_selected?(@selected_ids, @data, @id_field, @selectable)}
+                  data-indeterminate={page_selection_indeterminate(@selected_ids, @data, @id_field, @selectable)}
                   phx-hook="CinderIndeterminateCheckbox"
                   phx-click="toggle_select_all_page"
                   phx-target={@myself}
@@ -112,10 +113,10 @@ defmodule Cinder.Renderers.Table do
                 :for={{dom_id, item} <- @streams.data}
                 :if={not @error}
                 id={dom_id}
-                class={get_row_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, @theme)}
+                class={selection_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, Map.get(@theme, :selected_row_class))}
                 data-item-id={to_string(Map.get(item, @id_field))}
                 data-key="row_class"
-                phx-click={row_click_action(@row_click, @selectable, item, @id_field, @myself)}
+                phx-click={selection_click_action(@row_click, @selectable, @selected_ids, item, @id_field, @myself)}
               >
                 <.data_cells
                   item={item}
@@ -132,10 +133,10 @@ defmodule Cinder.Renderers.Table do
                 :for={{dom_id, item} <- table_rows(assigns)}
                 :if={not @error}
                 id={dom_id}
-                class={get_row_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, @theme)}
+                class={selection_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, Map.get(@theme, :selected_row_class))}
                 data-item-id={to_string(Map.get(item, @id_field))}
                 data-key="row_class"
-                phx-click={row_click_action(@row_click, @selectable, item, @id_field, @myself)}
+                phx-click={selection_click_action(@row_click, @selectable, @selected_ids, item, @id_field, @myself)}
               >
                 <.data_cells
                   item={item}
@@ -208,10 +209,11 @@ defmodule Cinder.Renderers.Table do
 
   defp data_cells(assigns) do
     ~H"""
-    <td :if={@selectable} class={[@theme.td_class, "w-10"]} data-key="td_class">
+    <td :if={Selection.enabled?(@selectable)} class={[@theme.td_class, "w-10"]} data-key="td_class">
       <input
         type="checkbox"
-        checked={item_selected?(@selected_ids, @item, @id_field)}
+        disabled={not Selection.item_toggleable?(@selectable, @selected_ids, @item, @id_field)}
+        checked={Selection.item_selected?(@selected_ids, @item, @id_field)}
         phx-click="toggle_select"
         phx-value-id={to_string(Map.get(@item, @id_field))}
         phx-target={@myself}
@@ -302,75 +304,39 @@ defmodule Cinder.Renderers.Table do
   # HELPER FUNCTIONS
   # ============================================================================
 
-  defp get_row_classes(
-         base_classes,
-         user_item_class,
-         row_click,
-         selectable,
-         selected_ids,
-         item,
-         id_field,
-         theme
-       ) do
-    # Merge the per-item user class onto the theme's base row class
-    base = [base_classes, resolve_item_class(user_item_class, item)]
+  defp all_page_selected?(selected_ids, data, id_field, selectable) when is_list(data) do
+    selectable_items = Enum.filter(data, &Selection.item_selectable?(selectable, &1))
 
-    # Add cursor-pointer if row is clickable (either via row_click or selectable without row_click)
-    clickable = row_click != nil or (selectable and row_click == nil)
-    classes = if clickable, do: base ++ ["cursor-pointer"], else: base
-
-    if selectable and item_selected?(selected_ids, item, id_field) do
-      classes ++ [theme.selected_row_class]
-    else
-      classes
-    end
+    selectable_items != [] and
+      Enum.all?(selectable_items, fn item ->
+        Selection.item_selected?(selected_ids, item, id_field)
+      end)
   end
 
-  defp row_click_action(row_click, _selectable, item, _id_field, _myself) when row_click != nil do
-    row_click.(item)
-  end
+  defp all_page_selected?(_selected_ids, _data, _id_field, _selectable), do: false
 
-  defp row_click_action(nil, true, item, id_field, myself) do
-    Phoenix.LiveView.JS.push("toggle_select",
-      value: %{id: to_string(Map.get(item, id_field))},
-      target: myself
-    )
-  end
-
-  defp row_click_action(nil, false, _item, _id_field, _myself), do: nil
-
-  defp all_page_selected?(selected_ids, data, id_field) when is_list(data) and data != [] do
-    Enum.all?(data, fn item ->
-      item_selected?(selected_ids, item, id_field)
+  defp some_page_selected?(selected_ids, data, id_field, selectable)
+       when is_list(data) and data != [] do
+    data
+    |> Enum.filter(&Selection.item_selectable?(selectable, &1))
+    |> Enum.any?(fn item ->
+      Selection.item_selected?(selected_ids, item, id_field)
     end)
   end
 
-  defp all_page_selected?(_selected_ids, _data, _id_field), do: false
+  defp some_page_selected?(_selected_ids, _data, _id_field, _selectable), do: false
 
-  defp some_page_selected?(selected_ids, data, id_field) when is_list(data) and data != [] do
-    Enum.any?(data, fn item ->
-      item_selected?(selected_ids, item, id_field)
-    end)
-  end
-
-  defp some_page_selected?(_selected_ids, _data, _id_field), do: false
-
-  defp page_selection_indeterminate(selected_ids, data, id_field) do
-    if some_page_selected?(selected_ids, data, id_field) &&
-         !all_page_selected?(selected_ids, data, id_field) do
+  defp page_selection_indeterminate(selected_ids, data, id_field, selectable) do
+    if some_page_selected?(selected_ids, data, id_field, selectable) &&
+         !all_page_selected?(selected_ids, data, id_field, selectable) do
       "true"
     else
       "false"
     end
   end
 
-  defp item_selected?(selected_ids, item, id_field) do
-    id = to_string(Map.get(item, id_field))
-    MapSet.member?(selected_ids, id)
-  end
-
   defp column_count(columns, selectable) do
     base_count = length(columns)
-    if selectable, do: base_count + 1, else: base_count
+    if Selection.enabled?(selectable), do: base_count + 1, else: base_count
   end
 end
