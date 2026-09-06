@@ -205,9 +205,23 @@ defmodule Cinder.Theme.DslModule do
   """
   def validate_theme(theme_module) do
     try do
-      # Try to resolve the theme to check for basic compilation issues
-      _theme = resolve_theme(theme_module)
-      :ok
+      theme = resolve_theme(theme_module)
+
+      invalid_properties =
+        theme
+        |> Map.keys()
+        |> Enum.reject(&Cinder.Theme.valid_property?/1)
+        |> Enum.sort()
+
+      case invalid_properties do
+        [] ->
+          :ok
+
+        properties ->
+          {:error,
+           "Unknown theme properties in #{inspect(theme_module)}: #{inspect(properties)}. " <>
+             "See Cinder.Theme.properties/0 for supported properties."}
+      end
     rescue
       error -> {:error, "Unable to validate theme module #{theme_module}: #{inspect(error)}"}
     end

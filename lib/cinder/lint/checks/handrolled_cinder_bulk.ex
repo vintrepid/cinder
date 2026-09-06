@@ -51,6 +51,7 @@ if Code.ensure_loaded?(MaestroTool.Lint.Check) do
     """
 
     @behaviour MaestroTool.Lint.Check
+    @heex_parser Module.concat(["MaestroTool", "HEExParser"])
 
     @impl true
     def meta do
@@ -752,15 +753,11 @@ if Code.ensure_loaded?(MaestroTool.Lint.Check) do
           unindented = strip_leading_indent(original_body, indent)
 
           new_body =
-            case MaestroTool.HEExParser.parse(unindented) do
-              {:ok, tree} ->
-                tree
-                |> transformer.()
-                |> MaestroTool.HEExParser.to_heex()
-                |> reindent(indent)
-
-              {:error, _} ->
-                original_body
+            with {:ok, tree} <- parse_heex(unindented),
+                 {:ok, serialized} <- tree |> transformer.() |> serialize_heex() do
+              reindent(serialized, indent)
+            else
+              _ -> original_body
             end
 
           if new_body == original_body do
@@ -777,6 +774,34 @@ if Code.ensure_loaded?(MaestroTool.Lint.Check) do
 
             before <> new_body <> rest
           end
+      end
+    end
+
+    # Maestro Tool is an optional development integration. Dynamic dispatch
+    # keeps Cinder compilable when the lint behaviour is present but its HEEx
+    # parser is not part of the current dependency environment.
+    defp parse_heex(source) do
+      case call_heex_parser(:parse, [source]) do
+        {:ok, {:ok, tree}} -> {:ok, tree}
+        {:ok, {:error, _reason} = error} -> error
+        {:error, reason} -> {:error, reason}
+      end
+    end
+
+    defp serialize_heex(tree) do
+      case call_heex_parser(:to_heex, [tree]) do
+        {:ok, rendered} when is_binary(rendered) -> {:ok, rendered}
+        {:ok, _other} -> {:error, :invalid_heex_parser_result}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+
+    defp call_heex_parser(function, arguments) do
+      with {:module, parser} <- Code.ensure_loaded(@heex_parser),
+           true <- function_exported?(parser, function, length(arguments)) do
+        {:ok, apply(parser, function, arguments)}
+      else
+        _ -> {:error, :heex_parser_unavailable}
       end
     end
 

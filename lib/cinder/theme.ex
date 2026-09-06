@@ -49,6 +49,28 @@ defmodule Cinder.Theme do
     <!-- This table uses "dark" theme, ignoring the configured default -->
   </Cinder.collection>
   ```
+
+  ## Application design-system adapters
+
+  Applications do not need to duplicate every Cinder theme property to fit a
+  broader design system. Extend the closest built-in theme, give the collection
+  a single application-owned root class, and style descendants through Cinder's
+  semantic `data-key` hooks:
+
+      defmodule MyAppWeb.CinderTheme do
+        use Cinder.Theme
+
+        extends(:daisy_ui)
+        set :container_class, "app-collection"
+      end
+
+      .app-collection [data-key="table_wrapper_class"] {
+        /* application collection treatment */
+      }
+
+  Hook names are a stable styling contract. Exact renderer nesting is not. A
+  hook normally matches its theme property name; state-only hooks such as
+  `error_class` identify renderer state without requiring a theme property.
   """
 
   @type theme :: %{atom() => String.t()}
@@ -185,6 +207,15 @@ defmodule Cinder.Theme do
     button_danger_class: "bg-red-600 text-white hover:bg-red-700",
     button_disabled_class: "opacity-50 cursor-not-allowed"
   }
+
+  # Optional renderer properties fall back to their non-compact equivalents
+  # when absent. Keeping them outside @theme_defaults preserves that fallback
+  # for existing themes while still making them part of the validated schema.
+  @optional_theme_properties [
+    :bulk_actions_compact_container_class,
+    :button_compact_class,
+    :pagination_compact_wrapper_class
+  ]
 
   # Re-export the DSL functionality
   defmacro __using__(opts) do
@@ -365,10 +396,25 @@ defmodule Cinder.Theme do
   end
 
   @doc """
+  Returns every supported theme property.
+
+  Most properties are present in `default/0`. Optional properties are omitted
+  from that map so renderers can fall back to their corresponding standard
+  property when a theme does not define a compact variant.
+  """
+  @spec properties() :: [atom()]
+  def properties do
+    @theme_defaults
+    |> Map.keys()
+    |> Kernel.++(@optional_theme_properties)
+    |> Enum.sort()
+  end
+
+  @doc """
   Validates that a theme property key is valid.
   """
   def valid_property?(key) when is_atom(key) do
-    Map.has_key?(@theme_defaults, key)
+    Map.has_key?(@theme_defaults, key) or key in @optional_theme_properties
   end
 
   def valid_property?(_), do: false

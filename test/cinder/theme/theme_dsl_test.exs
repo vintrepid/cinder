@@ -180,6 +180,16 @@ defmodule Cinder.ThemeDslTest do
       assert Theme.validate(InheritanceTestTheme) == :ok
     end
 
+    test "rejects unknown theme properties" do
+      assert {:error, reason} = Theme.validate(InvalidPropertyTheme)
+      assert reason =~ ":invalid_property"
+      assert reason =~ "Cinder.Theme.properties/0"
+    end
+
+    test "accepts built-in optional compact properties" do
+      assert Theme.validate(Cinder.Themes.DaisyUI) == :ok
+    end
+
     test "validates non-theme modules" do
       {:error, reason} = Theme.validate(String)
       assert String.contains?(reason, "does not implement resolve_theme/0")
@@ -196,12 +206,19 @@ defmodule Cinder.ThemeDslTest do
     test "valid_property? accepts known properties" do
       assert Theme.valid_property?(:container_class) == true
       assert Theme.valid_property?(:filter_text_input_class) == true
+      assert Theme.valid_property?(:pagination_compact_wrapper_class) == true
     end
 
     test "valid_property? rejects unknown properties" do
       assert Theme.valid_property?(:invalid_property) == false
       assert Theme.valid_property?("string_key") == false
       assert Theme.valid_property?(123) == false
+    end
+
+    test "properties lists the complete supported schema" do
+      assert :container_class in Theme.properties()
+      assert :bulk_actions_compact_container_class in Theme.properties()
+      assert Theme.properties() == Enum.sort(Enum.uniq(Theme.properties()))
     end
   end
 
