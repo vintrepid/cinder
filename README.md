@@ -32,6 +32,40 @@ Cinder automatically provides:
 - **🎨 Theming**: 9 built-in themes plus DSL for custom themes
 - **🌍 Internationalization**: Built-in translations ([eight languages](https://hexdocs.pm/cinder/localization.html#available-translations) and counting!)
 
+### Fit Cinder into an application design system
+
+Cinder owns Ash collection behavior—querying, filters, sorting, pagination,
+selection, bulk actions, URL state, and persistence. Your application can own
+the visual language without copying that behavior or redefining every theme
+property.
+
+Extend the closest built-in theme and set one application root class:
+
+```elixir
+defmodule MyAppWeb.CinderTheme do
+  use Cinder.Theme
+
+  extends(:daisy_ui)
+  set :container_class, "app-collection"
+end
+```
+
+Cinder renderers expose stable `data-key` styling hooks below that root:
+
+```css
+.app-collection [data-key="table_wrapper_class"] {
+  /* application collection treatment */
+}
+
+.app-collection [data-key="pagination_button_class"] {
+  /* application pagination treatment */
+}
+```
+
+This keeps the application's theme adapter small and lets Cinder change its
+internal DOM nesting without forcing page-specific CSS. Use
+`Cinder.Theme.validate/1` to catch unsupported or mistyped theme properties.
+
 ## Installation
 
 ### Using Igniter (Recommended)
