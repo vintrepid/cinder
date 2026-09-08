@@ -33,21 +33,22 @@ defmodule Cinder.Filter.Debug do
   require Logger
 
   @doc """
-  Logs a debug step with context information.
+  Logs a privacy-safe debug checkpoint.
 
-  Only logs when debug_filters is enabled in configuration.
+  Only logs when debug_filters is enabled in configuration. The supplied
+  message and context are deliberately not emitted because filter inputs may
+  contain private application data.
 
   ## Examples
 
       debug_step("Validating input", %{input: "test", step: 1})
 
   """
-  def debug_step(message, context \\ %{}) do
+  def debug_step(_message, _context \\ %{}) do
     if debug_enabled?() do
-      Logger.debug("""
-      [Cinder.Filter.Debug] #{message}
-      Context: #{inspect(context, pretty: true, limit: :infinity)}
-      """)
+      Logger.debug("Cinder filter debug checkpoint reached.",
+        event: "cinder.filter.debug_checkpoint"
+      )
     end
   end
 
@@ -71,11 +72,12 @@ defmodule Cinder.Filter.Debug do
       end_time = System.monotonic_time(:microsecond)
       duration = end_time - start_time
 
-      Logger.debug("""
-      [Cinder.Filter.Debug] #{callback_name} completed
-      Duration: #{duration}μs (#{Float.round(duration / 1000, 2)}ms)
-      Result: #{inspect(result, pretty: true, limit: 50)}
-      """)
+      Logger.debug("Cinder filter callback completed.",
+        event: "cinder.filter.callback_completed",
+        operation: Cinder.Observability.stable_token(callback_name),
+        duration_ms: duration / 1000,
+        outcome: "success"
+      )
 
       result
     else
@@ -95,20 +97,21 @@ defmodule Cinder.Filter.Debug do
       end)
 
   """
-  def debug_pipeline(filter_name, raw_value, column, process_fun) do
+  def debug_pipeline(filter_name, _raw_value, _column, process_fun) do
     if debug_enabled?() do
-      Logger.debug("""
-      [Cinder.Filter.Debug] #{filter_name} pipeline starting
-      Raw input: #{inspect(raw_value)}
-      Column config: #{inspect(column, limit: 10)}
-      """)
+      Logger.debug("Cinder filter pipeline started.",
+        event: "cinder.filter.pipeline_started",
+        component: Cinder.Observability.stable_token(filter_name),
+        outcome: "started"
+      )
 
-      result = debug_callback("#{filter_name}.process/2", process_fun)
+      result = debug_callback(filter_name, process_fun)
 
-      Logger.debug("""
-      [Cinder.Filter.Debug] #{filter_name} pipeline completed
-      Final result: #{inspect(result, pretty: true)}
-      """)
+      Logger.debug("Cinder filter pipeline completed.",
+        event: "cinder.filter.pipeline_completed",
+        component: Cinder.Observability.stable_token(filter_name),
+        outcome: "success"
+      )
 
       result
     else
@@ -128,19 +131,30 @@ defmodule Cinder.Filter.Debug do
   """
   def debug_validate_filter(module) when is_atom(module) do
     if debug_enabled?() do
-      Logger.debug("[Cinder.Filter.Debug] Validating filter: #{module}")
+      Logger.debug("Cinder filter validation started.",
+        event: "cinder.filter.validation_started",
+        module: Cinder.Observability.stable_token(module),
+        outcome: "started"
+      )
 
       case Cinder.Filter.Helpers.validate_filter_implementation(module) do
-        {:ok, message} ->
-          Logger.debug("[Cinder.Filter.Debug] ✓ #{message}")
+        {:ok, _message} ->
+          Logger.debug("Cinder filter validation completed.",
+            event: "cinder.filter.validation_completed",
+            module: Cinder.Observability.stable_token(module),
+            outcome: "success"
+          )
+
           :ok
 
         {:error, errors} ->
-          Logger.error("""
-          [Cinder.Filter.Debug] ✗ Filter validation failed: #{module}
-          Errors:
-          #{Enum.map_join(errors, "\n", &"  - #{&1}")}
-          """)
+          Logger.error("Cinder filter validation failed.",
+            event: "cinder.filter.validation_failed",
+            module: Cinder.Observability.stable_token(module),
+            count: length(errors),
+            outcome: "failure",
+            reason_code: "invalid_filter_implementation"
+          )
 
           {:error, errors}
       end
@@ -165,38 +179,45 @@ defmodule Cinder.Filter.Debug do
   """
   def debug_test_inputs(module, test_cases) when is_atom(module) and is_list(test_cases) do
     if debug_enabled?() do
-      Logger.debug(
-        "[Cinder.Filter.Debug] Testing #{module} with #{length(test_cases)} test cases"
+      Logger.debug("Cinder filter input tests started.",
+        event: "cinder.filter.input_tests_started",
+        module: Cinder.Observability.stable_token(module),
+        count: length(test_cases),
+        outcome: "started"
       )
 
       Enum.with_index(test_cases, 1)
       |> Enum.each(fn {{input, column}, index} ->
-        Logger.debug("[Cinder.Filter.Debug] Test case #{index}: #{inspect(input)}")
+        Logger.debug("Cinder filter input test started.",
+          event: "cinder.filter.input_test_started",
+          module: Cinder.Observability.stable_token(module),
+          count: index,
+          outcome: "started"
+        )
 
         try do
           result = module.process(input, column)
 
-          validation_result =
-            if result do
-              module.validate(result)
-            else
-              "N/A (nil result)"
-            end
+          if result do
+            module.validate(result)
+            module.empty?(result)
+          end
 
-          Logger.debug("""
-          [Cinder.Filter.Debug] Test case #{index} results:
-            Input: #{inspect(input)}
-            Column: #{inspect(column, limit: 5)}
-            Process result: #{inspect(result)}
-            Validation: #{validation_result}
-            Empty?: #{if result, do: module.empty?(result), else: "N/A"}
-          """)
+          Logger.debug("Cinder filter input test completed.",
+            event: "cinder.filter.input_test_completed",
+            module: Cinder.Observability.stable_token(module),
+            count: index,
+            outcome: "success"
+          )
         rescue
           error ->
-            Logger.error("""
-            [Cinder.Filter.Debug] Test case #{index} failed with error:
-            #{inspect(error)}
-            """)
+            Logger.error("Cinder filter input test failed.",
+              event: "cinder.filter.input_test_failed",
+              module: Cinder.Observability.stable_token(module),
+              count: index,
+              error_kind: Cinder.Observability.error_kind(error),
+              outcome: "failure"
+            )
         end
       end)
     end
@@ -216,11 +237,11 @@ defmodule Cinder.Filter.Debug do
   """
   def debug_query_building(module, field, filter_value) when is_atom(module) do
     if debug_enabled?() do
-      Logger.debug("""
-      [Cinder.Filter.Debug] Testing query building for #{module}
-      Field: #{field}
-      Filter value: #{inspect(filter_value)}
-      """)
+      Logger.debug("Cinder filter query build started.",
+        event: "cinder.filter.query_build_started",
+        module: Cinder.Observability.stable_token(module),
+        outcome: "started"
+      )
 
       # Create a dummy query for testing
       dummy_query = Ash.Query.new(DummyResource)
@@ -233,19 +254,22 @@ defmodule Cinder.Filter.Debug do
         end_time = System.monotonic_time(:microsecond)
         duration = end_time - start_time
 
-        Logger.debug("""
-        [Cinder.Filter.Debug] Query building completed
-        Duration: #{duration}μs
-        Query modified: #{result_query != dummy_query}
-        """)
+        Logger.debug("Cinder filter query build completed.",
+          event: "cinder.filter.query_build_completed",
+          module: Cinder.Observability.stable_token(module),
+          duration_ms: duration / 1000,
+          outcome: "success"
+        )
 
         result_query
       rescue
         error ->
-          Logger.error("""
-          [Cinder.Filter.Debug] Query building failed:
-          #{inspect(error)}
-          """)
+          Logger.error("Cinder filter query build failed.",
+            event: "cinder.filter.query_build_failed",
+            module: Cinder.Observability.stable_token(module),
+            error_kind: Cinder.Observability.error_kind(error),
+            outcome: "failure"
+          )
 
           dummy_query
       end
@@ -275,13 +299,13 @@ defmodule Cinder.Filter.Debug do
       # Estimate rendered size (approximate)
       rendered_size = result |> Phoenix.HTML.Safe.to_iodata() |> IO.iodata_length()
 
-      Logger.debug("""
-      [Cinder.Filter.Debug] Render performance for #{module}
-      Duration: #{duration}μs
-      Rendered size: #{rendered_size} bytes
-      Field: #{column.field}
-      Current value: #{inspect(current_value)}
-      """)
+      Logger.debug("Cinder filter render completed.",
+        event: "cinder.filter.render_completed",
+        module: Cinder.Observability.stable_token(module),
+        duration_ms: duration / 1000,
+        count: rendered_size,
+        outcome: "success"
+      )
 
       result
     else
@@ -309,7 +333,11 @@ defmodule Cinder.Filter.Debug do
   """
   def enable_debug do
     Application.put_env(:cinder, :debug_filters, true)
-    Logger.info("[Cinder.Filter.Debug] Debug mode enabled")
+
+    Logger.info("Cinder filter debug mode enabled.",
+      event: "cinder.filter.debug_enabled",
+      outcome: "enabled"
+    )
   end
 
   @doc """
@@ -323,7 +351,11 @@ defmodule Cinder.Filter.Debug do
   """
   def disable_debug do
     Application.put_env(:cinder, :debug_filters, false)
-    Logger.info("[Cinder.Filter.Debug] Debug mode disabled")
+
+    Logger.info("Cinder filter debug mode disabled.",
+      event: "cinder.filter.debug_disabled",
+      outcome: "disabled"
+    )
   end
 
   @doc """
@@ -338,18 +370,32 @@ defmodule Cinder.Filter.Debug do
   """
   def debug_comprehensive_test(module) when is_atom(module) do
     if debug_enabled?() do
-      Logger.info("[Cinder.Filter.Debug] Running comprehensive test for #{module}")
+      Logger.info("Cinder comprehensive filter test started.",
+        event: "cinder.filter.comprehensive_test_started",
+        module: Cinder.Observability.stable_token(module),
+        outcome: "started"
+      )
 
       # Test validation
       debug_validate_filter(module)
 
       # Test default options
       try do
-        options = module.default_options()
-        Logger.debug("[Cinder.Filter.Debug] Default options: #{inspect(options)}")
+        module.default_options()
+
+        Logger.debug("Cinder filter default options loaded.",
+          event: "cinder.filter.default_options_loaded",
+          module: Cinder.Observability.stable_token(module),
+          outcome: "success"
+        )
       rescue
         error ->
-          Logger.error("[Cinder.Filter.Debug] default_options/0 failed: #{inspect(error)}")
+          Logger.error("Cinder filter default options failed.",
+            event: "cinder.filter.default_options_failed",
+            module: Cinder.Observability.stable_token(module),
+            error_kind: Cinder.Observability.error_kind(error),
+            outcome: "failure"
+          )
       end
 
       # Test common process inputs
@@ -369,28 +415,37 @@ defmodule Cinder.Filter.Debug do
           result = module.process(input, column)
 
           if result do
-            validation = module.validate(result)
-            empty_check = module.empty?(result)
+            module.validate(result)
+            module.empty?(result)
 
-            Logger.debug("""
-            [Cinder.Filter.Debug] Process test:
-              Input: #{inspect(input)}
-              Result: #{inspect(result)}
-              Valid: #{validation}
-              Empty: #{empty_check}
-            """)
+            Logger.debug("Cinder filter process test completed.",
+              event: "cinder.filter.process_test_completed",
+              module: Cinder.Observability.stable_token(module),
+              outcome: "success"
+            )
           else
-            Logger.debug("[Cinder.Filter.Debug] Process test: #{inspect(input)} -> nil")
+            Logger.debug("Cinder filter process test returned no filter.",
+              event: "cinder.filter.process_test_empty",
+              module: Cinder.Observability.stable_token(module),
+              outcome: "empty"
+            )
           end
         rescue
           error ->
-            Logger.error(
-              "[Cinder.Filter.Debug] Process failed for #{inspect(input)}: #{inspect(error)}"
+            Logger.error("Cinder filter process test failed.",
+              event: "cinder.filter.process_test_failed",
+              module: Cinder.Observability.stable_token(module),
+              error_kind: Cinder.Observability.error_kind(error),
+              outcome: "failure"
             )
         end
       end)
 
-      Logger.info("[Cinder.Filter.Debug] Comprehensive test completed for #{module}")
+      Logger.info("Cinder comprehensive filter test completed.",
+        event: "cinder.filter.comprehensive_test_completed",
+        module: Cinder.Observability.stable_token(module),
+        outcome: "success"
+      )
     end
   end
 

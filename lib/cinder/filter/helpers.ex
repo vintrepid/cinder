@@ -694,14 +694,14 @@ defmodule Cinder.Filter.Helpers do
       debug_filter("MyFilter", "processing input", %{input: "test"})
 
   """
-  def debug_filter(filter_name, message, data \\ %{}) do
+  def debug_filter(filter_name, _message, _data \\ %{}) do
     if Application.get_env(:cinder, :debug_filters, false) do
       require Logger
 
-      Logger.debug("""
-      [Cinder.Filter.Debug] #{filter_name}: #{message}
-      Data: #{inspect(data, pretty: true)}
-      """)
+      Logger.debug("Cinder filter debug checkpoint reached.",
+        event: "cinder.filter.debug_checkpoint",
+        component: Cinder.Observability.stable_token(filter_name)
+      )
     end
   end
 
@@ -812,9 +812,9 @@ defmodule Cinder.Filter.Helpers do
         :persistent_term.put(key, true)
 
         Logger.warning(
-          "Embedded field #{inspect(field)} uses deprecated bracket notation. " <>
-            "Use double-underscore notation instead (e.g. \"profile__first_name\"). " <>
-            "Bracket notation will be removed in Cinder 1.0."
+          "Cinder embedded field uses deprecated bracket notation; use double-underscore notation instead. Bracket notation will be removed in Cinder 1.0.",
+          event: "cinder.filter.deprecated_bracket_notation",
+          reason_code: "deprecated_field_notation"
         )
       end
     end

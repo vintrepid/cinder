@@ -285,11 +285,10 @@ defmodule Cinder.QueryBuilderTest do
           assert {:error, _} = result
         end)
 
-      assert log_output =~ "Cinder query building crashed with exception for"
-      assert log_output =~ "TestResource"
+      assert log_output =~ "Cinder query build crashed"
     end
 
-    test "logs calculation errors with detailed error information" do
+    test "logs calculation errors without serializing error details" do
       defmodule TestResourceWithCalculation do
         use Ash.Resource, domain: nil, validate_domain_inclusion?: false
 
@@ -323,9 +322,8 @@ defmodule Cinder.QueryBuilderTest do
           assert {:error, _} = result
         end)
 
-      # Should show the resource name and actual error details
-      assert log_output =~ "TestResourceWithCalculation"
-      assert log_output =~ "Cinder query building crashed with exception for"
+      assert log_output =~ "Cinder query build crashed"
+      refute log_output =~ "INVALID_SQL_FUNCTION"
     end
   end
 
@@ -559,8 +557,7 @@ defmodule Cinder.QueryBuilderTest do
           QueryBuilder.apply_query_opts(query, opts)
         end)
 
-      # Should warn about unsupported options
-      assert log =~ "Unsupported query_opts provided: [:filter, :unknown_option]"
+      assert log =~ "Cinder ignored unsupported query options"
     end
 
     test "does not warn when only supported query_opts are provided" do
@@ -582,7 +579,7 @@ defmodule Cinder.QueryBuilderTest do
         end)
 
       # Should not contain any warnings
-      refute log =~ "Unsupported query_opts"
+      refute log =~ "Cinder ignored unsupported query options"
     end
 
     test "does not warn when no query_opts are provided" do
@@ -595,7 +592,7 @@ defmodule Cinder.QueryBuilderTest do
         end)
 
       # Should not contain any warnings
-      refute log =~ "Unsupported query_opts"
+      refute log =~ "Cinder ignored unsupported query options"
     end
   end
 
@@ -871,8 +868,7 @@ defmodule Cinder.QueryBuilderTest do
         end)
 
       assert result == query
-      assert logs =~ "Invalid sort_by format"
-      assert logs =~ "Expected list of {field, direction} tuples"
+      assert logs =~ "Cinder sort specification has an invalid format"
     end
 
     test "table sorts should override existing query sorts" do
@@ -1769,7 +1765,7 @@ defmodule Cinder.QueryBuilderTest do
       assert_received {:ash_read_called, query, _opts}
       assert query.action.name == :read
       # No mismatch warning — the warning is reserved for the pre-prepared path.
-      refute log =~ "ignoring explicit"
+      refute log =~ "Cinder ignored an explicit action for a prepared query"
     end
   end
 
@@ -1906,9 +1902,7 @@ defmodule Cinder.QueryBuilderTest do
       # Query keeps its action
       assert query.action.name == :read
       # Warning fires explaining the override was ignored
-      assert log =~ "ignoring explicit"
-      assert log =~ ":some_other_action"
-      assert log =~ ":read"
+      assert log =~ "Cinder ignored an explicit action for a prepared query"
     end
 
     test "matching action option fires no warning" do
@@ -1922,7 +1916,7 @@ defmodule Cinder.QueryBuilderTest do
 
       assert_received {:ash_read_called, query, _opts}
       assert query.action.name == :read
-      refute log =~ "ignoring explicit"
+      refute log =~ "Cinder ignored an explicit action for a prepared query"
     end
 
     test "no action option, no warning" do
@@ -1933,7 +1927,7 @@ defmodule Cinder.QueryBuilderTest do
           QueryBuilder.build_and_execute(prepared, base_options())
         end)
 
-      refute log =~ "ignoring explicit"
+      refute log =~ "Cinder ignored an explicit action for a prepared query"
     end
   end
 

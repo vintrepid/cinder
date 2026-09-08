@@ -1006,8 +1006,8 @@ defmodule Cinder.Issues.CalculationSortingIssueTest do
         assert parsed.sort_warning =~ "does not exist"
       end)
 
-    assert log =~
-             "Field 'user.profile.first_name' does not exist on Cinder.Issues.CalculationSortingIssueTest.TestUser"
+    assert log =~ "Cinder column sorting is unavailable"
+    refute log =~ "user.profile.first_name"
 
     # Test valid 2-level relationship: profile.bio (exists)
     simple_relationship = %{field: "profile.bio", sortable: true}
@@ -1030,8 +1030,8 @@ defmodule Cinder.Issues.CalculationSortingIssueTest do
         assert invalid_three_parsed.sort_warning =~ "does not exist"
       end)
 
-    assert log2 =~
-             "Field 'profile.address.nonexistent_field' does not exist on Cinder.Issues.CalculationSortingIssueTest.TestUserWithProfile"
+    assert log2 =~ "Cinder column sorting is unavailable"
+    refute log2 =~ "profile.address.nonexistent_field"
 
     # Test invalid middle relationship: profile.nonexistent_rel.field (invalid middle relationship)
     invalid_middle = %{field: "profile.nonexistent_rel.field", sortable: true}
@@ -1044,8 +1044,8 @@ defmodule Cinder.Issues.CalculationSortingIssueTest do
         assert invalid_middle_parsed.sort_warning =~ "does not exist"
       end)
 
-    assert log3 =~
-             "Field 'profile.nonexistent_rel.field' does not exist on Cinder.Issues.CalculationSortingIssueTest.TestUserWithProfile"
+    assert log3 =~ "Cinder column sorting is unavailable"
+    refute log3 =~ "profile.nonexistent_rel.field"
 
     # Test valid 3-level relationship: profile.address.city (exists)
     three_level_column = %{field: "profile.address.city", sortable: true}
@@ -1074,8 +1074,8 @@ defmodule Cinder.Issues.CalculationSortingIssueTest do
         assert in_memory_parsed.sort_warning =~ "in-memory calculation"
       end)
 
-    assert log4 =~
-             "Field 'profile.formatted_bio' is an in-memory calculation and cannot be sorted"
+    assert log4 =~ "Cinder column sorting is unavailable"
+    refute log4 =~ "profile.formatted_bio"
   end
 
   test "QueryBuilder validation uses correct error messages for relationship fields" do

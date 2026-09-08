@@ -108,12 +108,22 @@ defmodule Cinder.Column do
       # Log warnings if calculation has issues
       if sort_warning do
         require Logger
-        Logger.info("Cinder Column: #{sort_warning}")
+
+        Logger.info("Cinder column sorting is unavailable.",
+          event: "cinder.column.sort_unavailable",
+          resource: Cinder.Observability.stable_token(resource),
+          reason_code: "unsupported_field"
+        )
       end
 
       if filter_warning do
         require Logger
-        Logger.info("Cinder Column: #{filter_warning}")
+
+        Logger.info("Cinder column filtering is unavailable.",
+          event: "cinder.column.filter_unavailable",
+          resource: Cinder.Observability.stable_token(resource),
+          reason_code: "unsupported_field"
+        )
       end
 
       # Create column struct
@@ -180,9 +190,12 @@ defmodule Cinder.Column do
         default_column_config()
       end
     rescue
-      e ->
-        Logger.warning(
-          "Cinder: Column inference failed for #{inspect(key)}: #{Exception.message(e)}"
+      error ->
+        Logger.warning("Cinder column inference failed.",
+          event: "cinder.column.inference_failed",
+          resource: Cinder.Observability.stable_token(resource),
+          error_kind: Cinder.Observability.error_kind(error),
+          reason_code: "inference_error"
         )
 
         default_column_config()

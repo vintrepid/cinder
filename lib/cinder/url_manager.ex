@@ -225,16 +225,26 @@ defmodule Cinder.UrlManager do
             error ->
               require Logger
 
-              Logger.error(
-                "Error processing URL filter value for #{filter_type}: #{inspect(error)}. " <>
-                  "Skipping invalid filter."
+              Logger.error("Cinder could not decode a URL filter; skipping it.",
+                event: "cinder.url.filter_decode_failed",
+                component: Cinder.Observability.stable_token(filter_type),
+                error_kind: Cinder.Observability.error_kind(error),
+                outcome: "skipped",
+                reason_code: "invalid_filter_value"
               )
 
               acc
           end
         else
           require Logger
-          Logger.warning("Unknown filter type: #{filter_type}. Skipping filter.")
+
+          Logger.warning("Cinder received an unknown URL filter type; skipping it.",
+            event: "cinder.url.filter_unknown",
+            component: Cinder.Observability.stable_token(filter_type),
+            outcome: "skipped",
+            reason_code: "unknown_filter_type"
+          )
+
           acc
         end
       else
@@ -290,8 +300,11 @@ defmodule Cinder.UrlManager do
     else
       require Logger
 
-      Logger.warning(
-        "Invalid sort_by format in encode_sort: #{inspect(sort_by)}. Expected list of {field, direction} tuples."
+      Logger.warning("Cinder received an invalid URL sort specification.",
+        event: "cinder.url.sort_invalid",
+        count: length(sort_by),
+        outcome: "ignored",
+        reason_code: "invalid_sort_shape"
       )
 
       ""

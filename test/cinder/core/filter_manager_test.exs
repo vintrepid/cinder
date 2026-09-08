@@ -173,8 +173,8 @@ defmodule Cinder.FilterManagerRuntimeTest do
           assert html_string =~ "value=\"test\""
         end)
 
-      assert log_output =~ "Error rendering custom filter :missing for column 'price'"
-      assert log_output =~ "Falling back to text filter"
+      assert log_output =~ "Cinder custom filter rendering failed; using the text filter"
+      refute log_output =~ "price"
     end
 
     test "renders built-in filters normally" do
@@ -232,19 +232,19 @@ defmodule Cinder.FilterManagerRuntimeTest do
 
       log_output =
         capture_log(fn ->
-          result = FilterManager.process_filter_value("test", column)
+          result = FilterManager.process_filter_value("secret-customer@example.com", column)
 
           # Should fall back to text processing
           assert result == %{
                    type: :text,
-                   value: "test",
+                   value: "secret-customer@example.com",
                    operator: :contains,
                    case_sensitive: false
                  }
         end)
 
-      assert log_output =~ "Error processing filter value for custom filter :broken"
-      assert log_output =~ "Falling back to text processing"
+      assert log_output =~ "Cinder custom filter processing failed; using text processing"
+      refute log_output =~ "secret-customer@example.com"
     end
 
     test "falls back to text processing when custom filter module missing" do
@@ -259,19 +259,19 @@ defmodule Cinder.FilterManagerRuntimeTest do
 
       log_output =
         capture_log(fn ->
-          result = FilterManager.process_filter_value("test", column)
+          result = FilterManager.process_filter_value("secret-customer@example.com", column)
 
           # Should fall back to text processing
           assert result == %{
                    type: :text,
-                   value: "test",
+                   value: "secret-customer@example.com",
                    operator: :contains,
                    case_sensitive: false
                  }
         end)
 
-      assert log_output =~ "Error processing filter value for custom filter :missing"
-      assert log_output =~ "Falling back to text processing"
+      assert log_output =~ "Cinder custom filter processing failed; using text processing"
+      refute log_output =~ "secret-customer@example.com"
     end
 
     test "processes built-in filters normally" do
@@ -329,8 +329,8 @@ defmodule Cinder.FilterManagerRuntimeTest do
           assert is_list(config.filter_options)
         end)
 
-      assert log_output =~ "Custom filter :missing is registered but module is not available"
-      assert log_output =~ "for column 'price'. Falling back to text filter"
+      assert log_output =~ "Cinder custom filter module is unavailable; using the text filter"
+      refute log_output =~ "price"
     end
 
     test "infers built-in filters normally" do
@@ -376,9 +376,9 @@ defmodule Cinder.FilterManagerRuntimeTest do
           assert length(errors) == 2
         end)
 
-      assert log_output =~ "Custom filter validation failed during application startup"
-      assert log_output =~ "NonExistentModule does not exist"
-      assert log_output =~ "AnotherMissingModule does not exist"
+      assert log_output =~ "Cinder custom filter validation failed during startup"
+      refute log_output =~ "NonExistentModule"
+      refute log_output =~ "AnotherMissingModule"
     end
 
     test "continues execution even when validation fails" do
@@ -392,7 +392,7 @@ defmodule Cinder.FilterManagerRuntimeTest do
           assert {:error, _errors} = result
         end)
 
-      assert log_output =~ "Custom filter validation failed"
+      assert log_output =~ "Cinder custom filter validation failed"
 
       # Application should still be able to continue
       assert Registry.registered?(:text) == true

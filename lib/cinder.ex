@@ -201,12 +201,12 @@ defmodule Cinder do
       # Successful setup with filters
       Cinder.setup()
       # => :ok
-      # Logs: "Cinder: Registered 3 custom filters: slider, color_picker, date_picker"
+      # Logs the `cinder.filters.registered` event with a filter count.
 
       # Setup with configuration errors
       Cinder.setup()
       # => :ok
-      # Logs: "Cinder: Some custom filters failed to register: ..."
+      # Logs the `cinder.filters.registration_failed` event with an error count.
   """
   def setup do
     case Cinder.Filters.Registry.register_config_filters() do
@@ -214,11 +214,12 @@ defmodule Cinder do
         configured_filters = Application.get_env(:cinder, :filters, [])
 
         if configured_filters != [] do
-          filter_names = configured_filters |> Keyword.keys() |> Enum.join(", ")
           require Logger
 
-          Logger.info(
-            "Cinder: Registered #{length(configured_filters)} custom filters: #{filter_names}"
+          Logger.info("Cinder custom filters registered.",
+            event: "cinder.filters.registered",
+            count: length(configured_filters),
+            outcome: "success"
           )
         end
 
@@ -227,9 +228,11 @@ defmodule Cinder do
       {:error, errors} ->
         require Logger
 
-        Logger.warning(
-          "Cinder: Some custom filters failed to register:\n" <>
-            Enum.map_join(errors, "\n", &"  - #{&1}")
+        Logger.warning("Cinder custom filter registration failed.",
+          event: "cinder.filters.registration_failed",
+          count: length(errors),
+          outcome: "failure",
+          reason_code: "invalid_filter_configuration"
         )
 
         :ok

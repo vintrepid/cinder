@@ -36,7 +36,6 @@ defmodule Cinder.QueryBuilder do
     filters = Keyword.get(options, :filters, %{})
     sort_by = Keyword.get(options, :sort_by, [])
     columns = Keyword.get(options, :columns, [])
-    query_opts = Keyword.get(options, :query_opts, [])
     search_term = Keyword.get(options, :search_term, "")
     search_fn = Keyword.get(options, :search_fn)
 
@@ -63,16 +62,13 @@ defmodule Cinder.QueryBuilder do
         resource = extract_resource_for_logging(resource_or_query)
 
         Logger.error(
-          "Cinder query building crashed with exception for #{inspect(resource)}: #{inspect(error)}",
-          %{
-            resource: resource,
-            filters: filters,
-            sort_by: sort_by,
-            query_opts: query_opts,
-            tenant: Keyword.get(options, :tenant),
-            exception: inspect(error),
-            stacktrace: Exception.format_stacktrace(__STACKTRACE__)
-          }
+          "Cinder query build crashed",
+          event: "cinder.query.build_failed",
+          component: "query_builder",
+          operation: "build_query",
+          resource: resource,
+          error_kind: error.__struct__,
+          reason_code: "exception"
         )
 
         {:error, error}
@@ -165,7 +161,6 @@ defmodule Cinder.QueryBuilder do
     # Strip negative page sizes - use default instead
     page_size = if raw_page_size > 0, do: raw_page_size, else: 25
     current_page = Keyword.get(options, :current_page, 1)
-    query_opts = Keyword.get(options, :query_opts, [])
     ash_opts = build_read_opts(options)
 
     # Keyset pagination options
@@ -194,9 +189,13 @@ defmodule Cinder.QueryBuilder do
           # Check if user has configured pagination but action doesn't support it
           if Keyword.get(options, :pagination_configured, false) do
             Logger.warning(
-              "Table configured with page_size but action #{inspect(prepared_query.action.name)} doesn't support pagination. " <>
-                "All records will be loaded into memory. Add 'pagination do ... end' to your action: " <>
-                "https://hexdocs.pm/ash/pagination.html"
+              "Table configured with page_size but action doesn't support pagination. See https://hexdocs.pm/ash/pagination.html.",
+              event: "cinder.query.pagination_unsupported",
+              component: "query_builder",
+              operation: "execute",
+              resource: prepared_query.resource,
+              action: prepared_query.action.name,
+              reason_code: "action_not_paginated"
             )
           end
 
@@ -205,16 +204,13 @@ defmodule Cinder.QueryBuilder do
     rescue
       error ->
         Logger.error(
-          "Cinder table query crashed with exception for #{inspect(prepared_query.resource)}: #{inspect(error)}",
-          %{
-            resource: prepared_query.resource,
-            current_page: current_page,
-            page_size: page_size,
-            query_opts: query_opts,
-            tenant: Keyword.get(options, :tenant),
-            exception: inspect(error),
-            stacktrace: Exception.format_stacktrace(__STACKTRACE__)
-          }
+          "Cinder query execution crashed",
+          event: "cinder.query.execution_crashed",
+          component: "query_builder",
+          operation: "execute",
+          resource: prepared_query.resource,
+          error_kind: error.__struct__,
+          reason_code: "exception"
         )
 
         {:error, error}
@@ -278,9 +274,15 @@ defmodule Cinder.QueryBuilder do
   defp maybe_warn_action_mismatch(_query, nil), do: :ok
   defp maybe_warn_action_mismatch(%Ash.Query{action: %{name: same}}, same), do: :ok
 
-  defp maybe_warn_action_mismatch(query, action) do
+  defp maybe_warn_action_mismatch(query, _action) do
     Logger.warning(
-      "Cinder: ignoring explicit `action: #{inspect(action)}` because the supplied query is already prepared for action `#{inspect(query.action.name)}`"
+      "Cinder ignored an explicit action for a prepared query",
+      event: "cinder.query.action_mismatch",
+      component: "query_builder",
+      operation: "apply_action",
+      resource: query.resource,
+      action: query.action.name,
+      reason_code: "prepared_query_action"
     )
   end
 
@@ -375,17 +377,14 @@ defmodule Cinder.QueryBuilder do
   defp page_results(results) when is_list(results), do: results
 
   # Helper for consistent error logging
-  defp log_query_error(resource, query_error, current_page, page_size, ash_opts) do
+  defp log_query_error(resource, _query_error, _current_page, _page_size, _ash_opts) do
     Logger.error(
-      "Cinder table query execution failed for #{inspect(resource)}: #{inspect(query_error)}",
-      %{
-        resource: resource,
-        current_page: current_page,
-        page_size: page_size,
-        ash_opts: ash_opts,
-        tenant: Keyword.get(ash_opts, :tenant),
-        error: inspect(query_error)
-      }
+      "Cinder query execution failed",
+      event: "cinder.query.execution_failed",
+      component: "query_builder",
+      operation: "execute",
+      resource: resource,
+      reason_code: "ash_read_failed"
     )
   end
 
@@ -435,11 +434,14 @@ defmodule Cinder.QueryBuilder do
       |> Enum.reject(&(&1 in @supported_query_opts))
 
     if unsupported_opts != [] do
-      Logger.warning("""
-      Unsupported query_opts provided: #{inspect(unsupported_opts)}
-
-      Supported query_opts are: #{inspect(@supported_query_opts)}
-      """)
+      Logger.warning(
+        "Cinder ignored unsupported query options",
+        event: "cinder.query.options_unsupported",
+        component: "query_builder",
+        operation: "apply_query_opts",
+        reason_code: "unsupported_option",
+        count: length(unsupported_opts)
+      )
     end
   end
 
@@ -472,7 +474,15 @@ defmodule Cinder.QueryBuilder do
     case Cinder.Filters.Registry.get_filter(type) do
       nil ->
         require Logger
-        Logger.warning("Unknown filter type: #{type}")
+
+        Logger.warning(
+          "Cinder filter type is unknown",
+          event: "cinder.filter.type_unknown",
+          component: "query_builder",
+          operation: "apply_filter",
+          reason_code: "unknown_filter_type"
+        )
+
         query
 
       filter_module ->
@@ -481,7 +491,16 @@ defmodule Cinder.QueryBuilder do
         rescue
           error ->
             require Logger
-            Logger.error("Error building query for filter #{type}: #{inspect(error)}")
+
+            Logger.error(
+              "Cinder filter query build failed",
+              event: "cinder.filter.build_failed",
+              component: "query_builder",
+              operation: "apply_filter",
+              error_kind: error.__struct__,
+              reason_code: "exception"
+            )
+
             query
         end
     end
@@ -552,7 +571,16 @@ defmodule Cinder.QueryBuilder do
         [] ->
           # No valid searchable fields found
           require Logger
-          Logger.warning("Error building search filter for one or more searchable columns")
+
+          Logger.warning(
+            "Cinder search produced no valid conditions",
+            event: "cinder.search.conditions_missing",
+            component: "query_builder",
+            operation: "build_search",
+            reason_code: "no_valid_conditions",
+            count: length(searchable_columns)
+          )
+
           query
 
         [single_condition] ->
@@ -567,7 +595,16 @@ defmodule Cinder.QueryBuilder do
     rescue
       error ->
         require Logger
-        Logger.warning("Error building default search query: #{inspect(error)}")
+
+        Logger.warning(
+          "Cinder default search build failed",
+          event: "cinder.search.build_failed",
+          component: "query_builder",
+          operation: "build_search",
+          error_kind: error.__struct__,
+          reason_code: "exception"
+        )
+
         query
     end
   end
@@ -677,7 +714,11 @@ defmodule Cinder.QueryBuilder do
       require Logger
 
       Logger.warning(
-        "Invalid sort_by format: #{inspect(sort_by)}. Expected list of {field, direction} tuples."
+        "Cinder sort specification has an invalid format",
+        event: "cinder.sort.format_invalid",
+        component: "query_builder",
+        operation: "apply_sorting",
+        reason_code: "invalid_sort_format"
       )
 
       query
@@ -980,7 +1021,17 @@ defmodule Cinder.QueryBuilder do
     rescue
       error ->
         require Logger
-        Logger.warning("Failed to validate sortable fields: #{inspect(error)}")
+
+        Logger.warning(
+          "Cinder sortable field validation failed",
+          event: "cinder.sort.validation_failed",
+          component: "query_builder",
+          operation: "validate_sortable_fields",
+          resource: resource,
+          error_kind: error.__struct__,
+          reason_code: "exception"
+        )
+
         :ok
     end
   end

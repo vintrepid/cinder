@@ -24,8 +24,9 @@ defmodule Cinder.Table.UrlSync do
       require Logger
 
       Logger.warning(
-        "Cinder.Table.UrlSync is deprecated. Use `use Cinder.UrlSync` instead. " <>
-          "This will be removed in Cinder 1.0."
+        "Cinder.Table.UrlSync is deprecated; use Cinder.UrlSync instead.",
+        event: "cinder.url_sync.deprecated_module",
+        reason_code: "deprecated_module"
       )
 
       def handle_info({:table_state_change, _table_id, encoded_state}, socket) do

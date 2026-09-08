@@ -59,9 +59,16 @@ defmodule Cinder.Persistence do
       try do
         mod.load(key, scope)
       rescue
-        e ->
+        error ->
           require Logger
-          Logger.warning("Cinder.Persistence.load failed: #{Exception.message(e)}")
+
+          Logger.warning("Cinder persistence load failed.",
+            event: "cinder.persistence.load_failed",
+            module: Cinder.Observability.stable_token(mod),
+            error_kind: Cinder.Observability.error_kind(error),
+            outcome: "failure"
+          )
+
           nil
       end
     end
@@ -80,9 +87,16 @@ defmodule Cinder.Persistence do
       try do
         mod.save(key, scope, state)
       rescue
-        e ->
+        error ->
           require Logger
-          Logger.warning("Cinder.Persistence.save failed: #{Exception.message(e)}")
+
+          Logger.warning("Cinder persistence save failed.",
+            event: "cinder.persistence.save_failed",
+            module: Cinder.Observability.stable_token(mod),
+            error_kind: Cinder.Observability.error_kind(error),
+            outcome: "failure"
+          )
+
           :ok
       end
     end

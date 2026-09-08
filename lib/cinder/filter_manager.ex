@@ -282,9 +282,12 @@ defmodule Cinder.FilterManager do
           error ->
             require Logger
 
-            Logger.warning(
-              "Error rendering custom filter :#{assigns.column.filter_type} for column '#{assigns.column.field}': #{inspect(error)}. " <>
-                "Falling back to text filter."
+            Logger.warning("Cinder custom filter rendering failed; using the text filter.",
+              event: "cinder.filter.render_failed",
+              component: Cinder.Observability.stable_token(assigns.column.filter_type),
+              error_kind: Cinder.Observability.error_kind(error),
+              outcome: "fallback",
+              reason_code: "render_error"
             )
 
             # Fallback to text filter if rendering fails
@@ -303,9 +306,11 @@ defmodule Cinder.FilterManager do
         if Registry.custom_filter?(assigns.column.filter_type) do
           require Logger
 
-          Logger.warning(
-            "Custom filter :#{assigns.column.filter_type} is registered but module is not available. " <>
-              "Falling back to text filter for column '#{assigns.column.field}'"
+          Logger.warning("Cinder custom filter module is unavailable; using the text filter.",
+            event: "cinder.filter.module_unavailable",
+            component: Cinder.Observability.stable_token(assigns.column.filter_type),
+            outcome: "fallback",
+            reason_code: "module_unavailable"
           )
         end
 
@@ -500,9 +505,11 @@ defmodule Cinder.FilterManager do
       {:error, errors} ->
         require Logger
 
-        Logger.warning(
-          "Custom filter validation failed during application startup:\n" <>
-            Enum.map_join(errors, "\n", &"  - #{&1}")
+        Logger.warning("Cinder custom filter validation failed during startup.",
+          event: "cinder.filter.validation_failed",
+          count: length(errors),
+          outcome: "failure",
+          reason_code: "invalid_filter_implementation"
         )
 
         {:error, errors}
@@ -531,9 +538,11 @@ defmodule Cinder.FilterManager do
           else
             require Logger
 
-            Logger.warning(
-              "Custom filter :#{filter_type} is registered but module is not available " <>
-                "for column '#{key}'. Falling back to text filter."
+            Logger.warning("Cinder custom filter module is unavailable; using the text filter.",
+              event: "cinder.filter.module_unavailable",
+              component: Cinder.Observability.stable_token(filter_type),
+              outcome: "fallback",
+              reason_code: "module_unavailable"
             )
 
             :text
@@ -586,9 +595,12 @@ defmodule Cinder.FilterManager do
         error ->
           require Logger
 
-          Logger.error(
-            "Error processing filter value for custom filter :#{column.filter_type} " <>
-              "on column '#{column.field}': #{inspect(error)}. Falling back to text processing."
+          Logger.error("Cinder custom filter processing failed; using text processing.",
+            event: "cinder.filter.process_failed",
+            component: Cinder.Observability.stable_token(column.filter_type),
+            error_kind: Cinder.Observability.error_kind(error),
+            outcome: "fallback",
+            reason_code: "process_error"
           )
 
           # Fallback to text processing
@@ -600,9 +612,11 @@ defmodule Cinder.FilterManager do
       if Registry.custom_filter?(column.filter_type) do
         require Logger
 
-        Logger.warning(
-          "Custom filter :#{column.filter_type} is registered but module is not available. " <>
-            "Falling back to text processing for column '#{column.field}'"
+        Logger.warning("Cinder custom filter module is unavailable; using text processing.",
+          event: "cinder.filter.module_unavailable",
+          component: Cinder.Observability.stable_token(column.filter_type),
+          outcome: "fallback",
+          reason_code: "module_unavailable"
         )
       end
 

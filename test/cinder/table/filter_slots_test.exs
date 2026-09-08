@@ -242,7 +242,8 @@ defmodule Cinder.Table.FilterSlotsTest do
           assert html =~ "cinder-table"
         end)
 
-      assert logs =~ "Field 'nonexistent_field' does not exist"
+      assert logs =~ "Cinder column filtering is unavailable"
+      refute logs =~ "nonexistent_field"
     end
 
     test "logs warning for invalid relationship field paths" do
@@ -259,7 +260,8 @@ defmodule Cinder.Table.FilterSlotsTest do
           assert html =~ "cinder-table"
         end)
 
-      assert logs =~ "Field 'profile.invalid_field' does not exist"
+      assert logs =~ "Cinder column filtering is unavailable"
+      refute logs =~ "profile.invalid_field"
     end
   end
 
@@ -680,7 +682,8 @@ defmodule Cinder.Table.FilterSlotsTest do
           assert html =~ "cinder-table"
         end)
 
-      assert logs =~ "Field 'profile.first_name' does not exist"
+      assert logs =~ "Cinder column filtering is unavailable"
+      refute logs =~ "profile.first_name"
     end
 
     test "preserves column display while adding filter-only fields" do

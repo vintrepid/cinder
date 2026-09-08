@@ -329,7 +329,7 @@ defmodule Cinder.TableTest do
         end)
 
       # Should log deprecation warning
-      assert logs =~ "[DEPRECATED] Field 'name' uses deprecated filter_options attribute"
+      assert logs =~ "Cinder column uses the deprecated filter_options attribute"
     end
 
     test "unified format takes precedence over legacy filter_options" do
@@ -357,7 +357,7 @@ defmodule Cinder.TableTest do
         end)
 
       # Should still log deprecation warning
-      assert logs =~ "[DEPRECATED] Field 'name' uses deprecated filter_options attribute"
+      assert logs =~ "Cinder column uses the deprecated filter_options attribute"
     end
   end
 

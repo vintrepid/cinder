@@ -339,8 +339,8 @@ defmodule Cinder.ConfigRegistrationTest do
         end)
 
       # Should log warning about failed registration
-      assert log_output =~ "Some custom filters failed to register"
-      assert log_output =~ "broken:"
+      assert log_output =~ "Cinder custom filter registration failed"
+      refute log_output =~ "NonExistentModule"
 
       # Valid filter should still work
       assert Registry.get_filter(:slider) == TestSliderFilter
@@ -360,9 +360,9 @@ defmodule Cinder.ConfigRegistrationTest do
         end)
 
       # Should log successful registration
-      assert log_output =~ "Registered 2 custom filters"
-      assert log_output =~ "slider"
-      assert log_output =~ "another_slider"
+      assert log_output =~ "Cinder custom filters registered"
+      refute log_output =~ "slider"
+      refute log_output =~ "another_slider"
     end
 
     test "Cinder.setup with no configured filters" do
@@ -377,7 +377,7 @@ defmodule Cinder.ConfigRegistrationTest do
         end)
 
       # Should not log registration message when no filters
-      refute log_output =~ "Registered"
+      refute log_output =~ "Cinder custom filters registered"
     end
   end
 

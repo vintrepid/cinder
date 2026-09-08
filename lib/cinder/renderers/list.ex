@@ -24,7 +24,11 @@ defmodule Cinder.Renderers.List do
     has_item_slot = Map.get(assigns, :item_slot, []) != []
 
     unless has_item_slot do
-      Logger.warning("Cinder.List: No <:item> slot provided. Items will not be rendered.")
+      Logger.warning("Cinder.List: No <:item> slot provided. Items will not be rendered.",
+        event: "cinder.list.item_slot_missing",
+        outcome: "empty",
+        reason_code: "item_slot_missing"
+      )
     end
 
     container_class = get_container_class(assigns.container_class, assigns.theme)

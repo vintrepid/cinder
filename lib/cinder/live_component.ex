@@ -479,8 +479,11 @@ defmodule Cinder.LiveComponent do
         {:noreply, socket}
 
       {:error, reason} ->
-        Logger.warning(
-          "Cinder: failed to select all filtered records for #{inspect(socket.assigns.id)}: #{inspect(reason)}"
+        Logger.warning("Cinder could not select all filtered records.",
+          event: "cinder.selection.load_failed",
+          error_kind: Cinder.Observability.error_kind(reason),
+          outcome: "failure",
+          reason_code: "filtered_selection_failed"
         )
 
         {:noreply, socket}
@@ -506,7 +509,12 @@ defmodule Cinder.LiveComponent do
     if slot do
       execute_bulk_action(slot, socket)
     else
-      Logger.warning("Cinder: Bulk action slot not found at index #{index}")
+      Logger.warning("Cinder bulk action slot was not found.",
+        event: "cinder.bulk_action.slot_missing",
+        outcome: "failure",
+        reason_code: "slot_not_found"
+      )
+
       {:noreply, socket}
     end
   end
@@ -613,7 +621,13 @@ defmodule Cinder.LiveComponent do
 
         handle_bulk_action_result(result, slot, socket)
       else
-        Logger.error("Cinder: No resource configured for bulk action")
+        Logger.error("Cinder bulk action has no configured resource.",
+          event: "cinder.bulk_action.resource_missing",
+          action: Cinder.Observability.stable_token(action),
+          outcome: "failure",
+          reason_code: "resource_not_configured"
+        )
+
         {:noreply, socket}
       end
     end
@@ -655,7 +669,13 @@ defmodule Cinder.LiveComponent do
   end
 
   defp handle_bulk_action_error(slot, socket, reason) do
-    Logger.error("Cinder: Bulk action failed: #{inspect(reason)}")
+    Logger.error("Cinder bulk action failed.",
+      event: "cinder.bulk_action.failed",
+      action: Cinder.Observability.stable_token(slot[:action]),
+      error_kind: Cinder.Observability.error_kind(reason),
+      outcome: "failure",
+      reason_code: "action_failed"
+    )
 
     if event_name = slot[:on_error] do
       send(
@@ -755,15 +775,12 @@ defmodule Cinder.LiveComponent do
   end
 
   defp handle_result({:error, error}, socket) do
-    Logger.error(
-      "Cinder query failed for #{inspect(socket.assigns.query)}: #{inspect(error)}",
-      %{
-        resource: socket.assigns.query,
-        filters: socket.assigns.filters,
-        sort_by: socket.assigns.sort_by,
-        current_page: socket.assigns.current_page,
-        error: inspect(error)
-      }
+    Logger.error("Cinder query failed.",
+      event: "cinder.query.load_failed",
+      resource: Cinder.Observability.stable_token(extract_resource(socket.assigns)),
+      error_kind: Cinder.Observability.error_kind(error),
+      outcome: "failure",
+      reason_code: "query_error"
     )
 
     socket
@@ -776,15 +793,12 @@ defmodule Cinder.LiveComponent do
   end
 
   defp handle_result({:exit, reason}, socket) do
-    Logger.error(
-      "Cinder query crashed for #{inspect(socket.assigns.query)}: #{inspect(reason)}",
-      %{
-        resource: socket.assigns.query,
-        filters: socket.assigns.filters,
-        sort_by: socket.assigns.sort_by,
-        current_page: socket.assigns.current_page,
-        reason: inspect(reason)
-      }
+    Logger.error("Cinder query process exited.",
+      event: "cinder.query.load_crashed",
+      resource: Cinder.Observability.stable_token(extract_resource(socket.assigns)),
+      error_kind: Cinder.Observability.error_kind(reason),
+      outcome: "failure",
+      reason_code: "query_exit"
     )
 
     socket

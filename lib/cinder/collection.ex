@@ -681,10 +681,10 @@ defmodule Cinder.Collection do
       legacy_filter_options = Map.get(slot, :filter_options, [])
 
       if legacy_filter_options != [] do
-        field_name = field || "unknown"
-
-        Logger.warning(
-          "[DEPRECATED] Field '#{field_name}' uses deprecated filter_options attribute. Use `filter={[type: #{inspect(filter_type)}, ...]}` instead."
+        Logger.warning("Cinder column uses the deprecated filter_options attribute.",
+          event: "cinder.collection.deprecated_filter_options",
+          component: Cinder.Observability.stable_token(filter_type),
+          reason_code: "deprecated_configuration"
         )
       end
 
@@ -1102,7 +1102,12 @@ defmodule Cinder.Collection do
   defp get_renderer(:grid), do: Cinder.Renderers.Grid
 
   defp get_renderer(layout) do
-    Logger.warning("Unknown layout #{inspect(layout)}, falling back to :table")
+    Logger.warning("Cinder received an unknown layout and is using the table renderer.",
+      event: "cinder.collection.unknown_layout",
+      state: Cinder.Observability.stable_token(layout),
+      reason_code: "unsupported_layout"
+    )
+
     Cinder.Renderers.Table
   end
 
@@ -1144,8 +1149,9 @@ defmodule Cinder.Collection do
   defp normalize_query_params(nil, query) when not is_nil(query), do: query
 
   defp normalize_query_params(resource, query) when not is_nil(resource) and not is_nil(query) do
-    Logger.warning(
-      "Both :resource and :query provided to Cinder.collection. Using :query and ignoring :resource."
+    Logger.warning("Both :resource and :query provided to Cinder.collection; using :query.",
+      event: "cinder.collection.ambiguous_source",
+      reason_code: "resource_and_query_provided"
     )
 
     query

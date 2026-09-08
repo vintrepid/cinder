@@ -24,7 +24,11 @@ defmodule Cinder.Renderers.Grid do
     has_item_slot = Map.get(assigns, :item_slot, []) != []
 
     unless has_item_slot do
-      Logger.warning("Cinder.Grid: No <:item> slot provided. Items will not be rendered.")
+      Logger.warning("Cinder.Grid: No <:item> slot provided. Items will not be rendered.",
+        event: "cinder.grid.item_slot_missing",
+        outcome: "empty",
+        reason_code: "item_slot_missing"
+      )
     end
 
     container_class =
