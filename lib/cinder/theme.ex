@@ -368,7 +368,7 @@ defmodule Cinder.Theme do
   Returns :ok if the theme is valid, or {:error, reason} if invalid.
   """
   def validate(theme_module) when is_atom(theme_module) do
-    if function_exported?(theme_module, :resolve_theme, 0) do
+    if Code.ensure_loaded?(theme_module) and function_exported?(theme_module, :resolve_theme, 0) do
       # For DSL-based themes, use the DSL validation
       Cinder.Theme.DslModule.validate_theme(theme_module)
     else
