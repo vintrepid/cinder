@@ -18,6 +18,7 @@ defmodule Cinder.MixProject do
       description: description(),
       name: "Cinder",
       aliases: aliases(),
+      maestro: [lint_checks: [Cinder.Lint.Checks.HandrolledCinderBulk]],
       source_url: @source_url,
       dialyzer: [plt_add_apps: [:mix]],
       gettext: [write_reference_line_numbers: false]

@@ -43,4 +43,9 @@ defmodule Cinder.Lint.Checks.HandrolledCinderBulkTest do
     refute fixed =~ ~s(phx-click="delete_selected")
     refute fixed =~ ~s(def handle_event("delete_selected")
   end
+
+  test "is registered with the standard Maestro linter" do
+    assert HandrolledCinderBulk in MaestroTool.Lint.checks()
+    assert Enum.any?(MaestroTool.Lint.rules(), &(&1.name == :handrolled_cinder_bulk))
+  end
 end
