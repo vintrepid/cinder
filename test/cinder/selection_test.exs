@@ -7,6 +7,22 @@ defmodule Cinder.SelectionTest do
 
   alias Cinder.LiveComponent
 
+  defmodule AbsoluteSelectionStore do
+    @behaviour Cinder.Selection.Store
+
+    @impl true
+    def load(scope, subject) do
+      send(scope.test_pid, {:selection_loaded, subject})
+      scope.selected_ids
+    end
+
+    @impl true
+    def replace(scope, subject, selected_ids) do
+      send(scope.test_pid, {:selection_replaced, subject, selected_ids})
+      :ok
+    end
+  end
+
   # Helper to create a properly structured socket for testing
   defp make_socket(assigns) do
     defaults = %{
@@ -30,6 +46,32 @@ defmodule Cinder.SelectionTest do
   end
 
   describe "toggle_select event" do
+    test "persists the resource slice through an absolute selection store" do
+      scope = %{test_pid: self(), selected_ids: ["user-2"]}
+
+      assert Cinder.Selection.Store.load(AbsoluteSelectionStore, scope, "Example.User") ==
+               MapSet.new(["user-2"])
+
+      assert_received {:selection_loaded, "Example.User"}
+
+      socket =
+        make_socket(%{
+          id: "test-table",
+          selectable: true,
+          selected_ids: MapSet.new(["user-2"]),
+          selection_store: AbsoluteSelectionStore,
+          selection_subject: "Example.User",
+          persist_scope: scope,
+          data: [%{id: "user-1"}, %{id: "user-2"}]
+        })
+
+      {:noreply, _updated_socket} =
+        LiveComponent.handle_event("toggle_select", %{"id" => "user-1"}, socket)
+
+      assert_received {:selection_replaced, "Example.User", selected_ids}
+      assert selected_ids == MapSet.new(["user-1", "user-2"])
+    end
+
     test "adds item to selection when not selected" do
       socket =
         make_socket(%{

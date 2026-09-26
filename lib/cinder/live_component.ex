@@ -111,6 +111,7 @@ defmodule Cinder.LiveComponent do
 
   def update(assigns, socket) do
     prev_state = data_state(socket.assigns)
+    initialize_selection? = not Map.has_key?(socket.assigns, :selected_ids)
 
     socket =
       socket
@@ -119,6 +120,13 @@ defmodule Cinder.LiveComponent do
       |> assign_column_definitions()
       |> decode_url_state(assigns)
       |> load_data_if_needed(prev_state)
+
+    socket =
+      if initialize_selection? and MapSet.size(socket.assigns.selected_ids) > 0 do
+        notify_selection_observer(socket, :load)
+      else
+        socket
+      end
 
     {:ok, socket}
   end
@@ -734,6 +742,17 @@ defmodule Cinder.LiveComponent do
   end
 
   defp notify_selection_change(socket, action) do
+    Cinder.Selection.Store.replace(
+      socket.assigns[:selection_store],
+      socket.assigns[:persist_scope],
+      socket.assigns[:selection_subject],
+      socket.assigns.selected_ids
+    )
+
+    notify_selection_observer(socket, action)
+  end
+
+  defp notify_selection_observer(socket, action) do
     if event_name = socket.assigns[:on_selection_change] do
       payload = %{
         component_id: socket.assigns.id,
@@ -1011,6 +1030,16 @@ defmodule Cinder.LiveComponent do
     # Determine pagination mode (default to :offset for backwards compatibility)
     pagination_mode = assigns[:pagination_mode] || :offset
 
+    selection_store =
+      assigns[:selection_store] || Application.get_env(:cinder, :selection_store)
+
+    selected_ids =
+      Cinder.Selection.Store.load(
+        selection_store,
+        assigns[:persist_scope],
+        assigns[:selection_subject]
+      )
+
     socket
     |> assign(:page_size, selected_page_size)
     |> assign(:page_size_config, updated_page_size_config)
@@ -1037,7 +1066,9 @@ defmodule Cinder.LiveComponent do
     |> assign(:last_keyset, assigns[:last_keyset])
     # Selection state
     |> assign(:selectable, assigns[:selectable] || false)
-    |> assign_new(:selected_ids, fn -> MapSet.new() end)
+    |> assign_new(:selected_ids, fn -> selected_ids end)
+    |> assign(:selection_store, selection_store)
+    |> assign(:selection_subject, assigns[:selection_subject])
     |> assign(:on_selection_change, assigns[:on_selection_change])
     |> assign(:on_query_change, assigns[:on_query_change])
     |> assign(:id_field, assigns[:id_field] || :id)

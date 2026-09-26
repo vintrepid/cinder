@@ -677,6 +677,38 @@ def handle_info({:selection_changed, payload}, socket) do
 end
 ```
 
+### Application-Owned Absolute Selection
+
+By default, selection belongs to one mounted Cinder component. Applications
+that treat selection as a durable, user-owned absolute collection can provide a
+`Cinder.Selection.Store` adapter:
+
+```elixir
+config :cinder, selection_store: MyApp.AbsoluteSelectionStore
+
+defmodule MyApp.AbsoluteSelectionStore do
+  @behaviour Cinder.Selection.Store
+
+  def load(user, subject), do: MyApp.Collections.selected_ids!(user, subject)
+
+  def replace(user, subject, selected_ids) do
+    MyApp.Collections.replace!(user, subject, MapSet.to_list(selected_ids))
+    :ok
+  end
+end
+```
+
+The collection's existing `persist_scope` is passed to the adapter. Its Ash
+resource module name is the default subject, so replacing selected users does
+not erase selected guides or messages in a heterogeneous working collection.
+Use `selection_subject` only when the application needs a stable subject key
+different from the resource module name, or `selection_store` to override the
+configured adapter for one collection.
+
+The host application remains responsible for authorization and must reauthorize
+members when resolving a selection for an action. Selection membership must not
+grant access to a record.
+
 ### Accessing Selection Context
 
 The bulk action slot receives selection context:

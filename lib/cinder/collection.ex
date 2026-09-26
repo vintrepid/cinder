@@ -275,6 +275,19 @@ defmodule Cinder.Collection do
         "Persistence is skipped when nil."
   )
 
+  attr(:selection_store, :any,
+    default: nil,
+    doc:
+      "Adapter implementing `Cinder.Selection.Store`. Defaults to the configured " <>
+        "`:cinder, :selection_store` adapter."
+  )
+
+  attr(:selection_subject, :string,
+    default: nil,
+    doc:
+      "Stable subject key for absolute selection membership. Defaults to the Ash resource module name."
+  )
+
   attr(:pagination, :any,
     default: :offset,
     doc:
@@ -501,11 +514,20 @@ defmodule Cinder.Collection do
       |> assign_new(:default_filters, fn -> %{} end)
       |> assign_new(:persist_key, fn -> nil end)
       |> assign_new(:persist_scope, fn -> nil end)
+      |> assign_new(:selection_store, fn -> nil end)
+      |> assign_new(:selection_subject, fn -> nil end)
       |> assign(:sort_mode, normalize_sort_mode(assigns[:sort_mode]))
 
     # Validate and normalize query/resource parameters
     normalized_query = normalize_query_params(assigns[:resource], assigns[:query])
     resource = extract_resource_from_query(normalized_query)
+
+    assigns =
+      assign(
+        assigns,
+        :selection_subject,
+        assigns.selection_subject || selection_subject(resource)
+      )
 
     # Process columns
     processed_columns = process_columns(assigns.col, resource)
@@ -641,10 +663,15 @@ defmodule Cinder.Collection do
         default_filters={@default_filters}
         persist_key={@persist_key}
         persist_scope={@persist_scope}
+        selection_store={@selection_store}
+        selection_subject={@selection_subject}
       />
     </div>
     """
   end
+
+  defp selection_subject(resource) when is_atom(resource), do: inspect(resource)
+  defp selection_subject(_resource), do: nil
 
   # ============================================================================
   # PUBLIC PROCESSING FUNCTIONS
