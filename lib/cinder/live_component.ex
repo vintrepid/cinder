@@ -19,6 +19,15 @@ defmodule Cinder.LiveComponent do
 
   @impl true
   def mount(socket) do
+    socket =
+      if live_socket?(socket) do
+        namespace = to_string(socket.assigns.myself)
+
+        stream_configure(socket, :data, dom_id: fn item -> "cinder-#{namespace}-#{item.id}" end)
+      else
+        socket
+      end
+
     {:ok, maybe_stream(socket, :data, [])}
   end
 
