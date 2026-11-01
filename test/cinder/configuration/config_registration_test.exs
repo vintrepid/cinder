@@ -1,5 +1,6 @@
 defmodule Cinder.ConfigRegistrationTest do
   use ExUnit.Case, async: false
+  import Cinder.TestHelpers, only: [put_app_env: 2]
 
   alias Cinder.Filters.Registry
 
@@ -123,16 +124,8 @@ defmodule Cinder.ConfigRegistrationTest do
   end
 
   setup do
-    # Clear any existing configuration
-    original_config = Application.get_env(:cinder, :filters, [])
-
-    Application.put_env(:cinder, :filters, [])
-
-    on_exit(fn ->
-      Application.put_env(:cinder, :filters, original_config)
-    end)
-
-    :ok
+    # Start every test with no custom filters registered
+    put_app_env(:filters, [])
   end
 
   describe "configuration-based registration" do
@@ -382,20 +375,6 @@ defmodule Cinder.ConfigRegistrationTest do
   end
 
   describe "edge cases and error handling" do
-    test "config registration provides filters through configuration" do
-      # Set up config
-      Application.put_env(:cinder, :filters, slider: TestSliderFilter)
-
-      # Runtime registration only validates, doesn't store
-      assert Registry.register_filter(:slider, TestSliderFilter) == :ok
-
-      # Config registration makes filters available
-      Registry.register_config_filters()
-
-      # Config filter should be available
-      assert Registry.get_filter(:slider) == TestSliderFilter
-    end
-
     test "empty configuration handling" do
       Application.put_env(:cinder, :filters, [])
 
@@ -420,22 +399,6 @@ defmodule Cinder.ConfigRegistrationTest do
       # Should handle nil gracefully
       assert Registry.get_filter(:valid) == TestSliderFilter
       assert Registry.get_filter(:slider) == nil
-    end
-
-    test "config filters work correctly" do
-      # Config filters
-      Application.put_env(:cinder, :filters, config_slider: TestSliderFilter)
-
-      Registry.register_config_filters()
-
-      # Should be available
-      assert Registry.get_filter(:config_slider) == TestSliderFilter
-
-      # Should be marked as custom
-      assert Registry.custom_filter?(:config_slider) == true
-
-      custom_filters = Registry.list_custom_filters()
-      assert map_size(custom_filters) == 1
     end
   end
 end

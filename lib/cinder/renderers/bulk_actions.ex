@@ -1,10 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Renderers.BulkActions do
   @moduledoc """
   Shared bulk actions component used by Table, List, and Grid renderers.
 
   Supports themed buttons via `label`/`variant` attributes, or custom rendering
-  via inner content. See the [Advanced Features guide](advanced.md#selection--bulk-actions)
-  for comprehensive documentation.
+  via inner content. See the [Advanced Features guide](advanced.md#selection-bulk-actions).
   """
 
   use Phoenix.Component

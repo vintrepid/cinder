@@ -13,8 +13,7 @@ defmodule Mix.Tasks.Cinder.Gen.FilterTest do
           "--template",
           "multi_checkboxes",
           "--no-tests",
-          "--no-config",
-          "--no-setup"
+          "--no-config"
         ])
 
       assert_creates(igniter, "lib/my_app/filters/boxes.ex")
@@ -26,6 +25,10 @@ defmodule Mix.Tasks.Cinder.Gen.FilterTest do
 
       assert content =~ "Cinder.Filters.MultiCheckboxes.render("
       refute content =~ "Cinder.Filters.Text"
+
+      # Shown by Igniter after the changes are applied, not printed while building them
+      assert [notice] = igniter.notices
+      assert notice =~ "MyApp.Filters.Boxes has been generated"
     end
   end
 end

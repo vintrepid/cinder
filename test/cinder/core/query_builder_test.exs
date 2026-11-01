@@ -347,91 +347,91 @@ defmodule Cinder.QueryBuilderTest do
     end
   end
 
-  describe "validate_sortable_fields/2" do
-    test "handles calculation field sorting" do
-      # Test calculation fields work correctly
-      sort_by = [{"track_count", :asc}]
-      result = QueryBuilder.validate_sortable_fields(sort_by, Album)
-      assert result == :ok
-    end
+  # Sort keys come from the client (URL params, events). Validating one must never
+  # create an atom, or a client sending distinct keys could fill the atom table.
+  describe "sort field validation with client-supplied names" do
+    defp bogus, do: "cinder_bogus_#{System.unique_integer([:positive])}"
 
-    test "handles regular field sorting" do
-      # Test regular fields work correctly
-      sort_by = [{"title", :asc}]
-      result = QueryBuilder.validate_sortable_fields(sort_by, Album)
-      assert result == :ok
-    end
+    defp refute_atom_exists(name),
+      do: assert_raise(ArgumentError, fn -> String.to_existing_atom(name) end)
 
-    test "handles mixed calculation and field sorting" do
-      # Test combination of different field types
-      sort_by = [
-        {"track_count", :asc},
-        {"title", :desc}
-      ]
+    test "an unknown field, relationship or embedded name is an error, and creates no atom" do
+      for {resource, notation} <- [
+            {Album, &Function.identity/1},
+            {AggregateAlbum, &(&1 <> ".name")},
+            {AggregateAlbum, &("artist." <> &1)},
+            {TestUser, &(&1 <> "__first_name")},
+            {TestUser, &("profile__" <> &1)},
+            {TestUser, &("settings__address__" <> &1)}
+          ] do
+        name = bogus()
+        field = notation.(name)
 
-      result = QueryBuilder.validate_sortable_fields(sort_by, Album)
-      assert result == :ok
-    end
+        assert {:error, _} = QueryBuilder.validate_sortable_fields([{field, :asc}], resource),
+               "#{field} on #{inspect(resource)}"
 
-    test "handles invalid field gracefully" do
-      # Test that invalid fields return error instead of crashing
-      invalid_sort = [{"nonexistent_field", :asc}]
-      result = QueryBuilder.validate_sortable_fields(invalid_sort, Album)
-
-      case result do
-        :ok ->
-          # This is fine - might be valid in some contexts
-          :ok
-
-        {:error, message} ->
-          # Error message should be helpful
-          assert is_binary(message)
-          assert String.contains?(message, "nonexistent_field")
+        refute_atom_exists(name)
       end
+    end
+
+    test "real fields still validate" do
+      assert QueryBuilder.validate_sortable_fields([{"title", :asc}], Album) == :ok
+
+      assert QueryBuilder.validate_sortable_fields([{"profile__first_name", :asc}], TestUser) ==
+               :ok
+    end
+
+    # Regression: a failure inside validation used to let the sort through (fail-open)
+    @tag :capture_log
+    test "a sort that can't be validated is an error, not let through" do
+      assert {:error, message} = QueryBuilder.validate_sortable_fields([{"title", :asc}], String)
+      assert message =~ "Failed to validate sort fields"
     end
   end
 
-  describe "resolve_field_resource/2" do
-    test "handles direct fields" do
-      # Should handle direct fields
-      {resource, field} = QueryBuilder.resolve_field_resource(Album, "title")
-      assert resource == Album
-      assert field == "title"
-    end
+  # Deprecated wrappers over `Cinder.Field` (its tests cover the edge cases), until 1.0
+  describe "deprecated field helpers" do
+    defp deprecated(function, args), do: apply(QueryBuilder, function, args)
 
-    test "handles calculation fields" do
-      # Should handle calculations
-      {resource, field} = QueryBuilder.resolve_field_resource(Album, "track_count")
-      assert resource == Album
-      assert field == "track_count"
-    end
+    test "agree with what they used to say" do
+      assert deprecated(:validate_field_existence, [Music.Album, "artist.name"])
+      assert deprecated(:validate_field_existence, [Music.Album, "details__label"])
+      refute deprecated(:validate_field_existence, [Music.Album, "nope"])
+      assert deprecated(:validate_field_existence, [NotAnAshResource, "anything"])
 
-    test "handles relationship fields correctly" do
-      # Test that it handles dot notation gracefully (even if relationship doesn't exist)
-      {resource, field} = QueryBuilder.resolve_field_resource(Album, "artist.name")
+      assert deprecated(:field_exists_on_resource?, [Music.Album, "title"])
+      assert deprecated(:field_exists_on_resource?, [Music.Album, "artist"])
+      refute deprecated(:field_exists_on_resource?, [Music.Album, "artist.name"])
 
-      # Should return something reasonable, doesn't need to be perfect since relationship doesn't exist
-      assert is_atom(resource)
-      assert is_binary(field)
+      assert %{name: :title_lower} =
+               calculation = deprecated(:get_calculation_info, [Music.Album, :title_lower])
+
+      assert deprecated(:get_calculation_info, [Music.Album, "title"]) == nil
+      assert deprecated(:calculation_sortable?, [calculation])
+
+      assert deprecated(:resolve_field_resource, [Music.Album, "artist.name"]) ==
+               {Music.Artist, "name"}
+
+      assert deprecated(:resolve_field_resource, [Music.Album, "title"]) == {Music.Album, "title"}
     end
   end
 
   describe "string-based sorting integration" do
-    test "build_and_execute handles string-based field sorting" do
-      # Integration test for string-based sorting (both regular and relationship fields)
+    test "build_and_execute sorts by string field names, in order" do
+      for {name, email} <- [{"b", "x"}, {"a", "y"}, {"b", "z"}, {"a", "w"}] do
+        Ash.Seed.seed!(TestUser, %{name: name, email: email})
+      end
+
       columns = [
-        %{field: "title", label: "Title", sortable: true},
-        %{field: "track_count", label: "Track Count", sortable: true}
+        %{field: "name", label: "Name", sortable: true},
+        %{field: "email", label: "Email", sortable: true}
       ]
 
-      sort_by = [{"title", :asc}, {"track_count", :desc}]
-
-      # This should work with string-based sorting
-      result =
+      {:ok, page} =
         QueryBuilder.build_and_execute(
-          Album,
+          TestUser,
           filters: %{},
-          sort_by: sort_by,
+          sort_by: [{"name", :asc}, {"email", :desc}],
           current_page: 1,
           page_size: 10,
           columns: columns,
@@ -440,8 +440,8 @@ defmodule Cinder.QueryBuilderTest do
           query_opts: []
         )
 
-      # Should return either success or error, but should NOT crash
-      assert match?({:ok, _}, result) or match?({:error, _}, result)
+      assert Enum.map(page.results, &{&1.name, &1.email}) ==
+               [{"a", "y"}, {"a", "w"}, {"b", "z"}, {"b", "x"}]
     end
   end
 
@@ -620,19 +620,14 @@ defmodule Cinder.QueryBuilderTest do
       assert result.filters == [:custom_applied]
     end
 
-    test "attempts to apply standard filters for columns without custom functions" do
+    # A filter that can't be built fails the load rather than being dropped, which would
+    # show the records it was there to exclude (it used to return the query unfiltered)
+    test "a standard filter that can't be built raises instead of being dropped" do
       query = %MockQueryFilters{resource: TestResource}
       filters = %{"title" => %{type: :text, value: "test", operator: :contains}}
       columns = [%{field: "title", filter_fn: nil}]
 
-      # This will now gracefully handle errors and return the original query
-      # instead of raising an exception. We use with_log to get both result and suppress logs.
-      {result, _logs} =
-        ExUnit.CaptureLog.with_log(fn ->
-          QueryBuilder.apply_filters(query, filters, columns)
-        end)
-
-      assert result == query
+      assert_raise ArgumentError, fn -> QueryBuilder.apply_filters(query, filters, columns) end
     end
   end
 
@@ -762,6 +757,39 @@ defmodule Cinder.QueryBuilderTest do
     end
   end
 
+  describe "build_query/2 with tiebreakers" do
+    defp sorted_by(sort_by, tiebreakers) do
+      {:ok, query} =
+        QueryBuilder.build_query(TestUser, sort_by: sort_by, tiebreakers: tiebreakers)
+
+      query.sort
+    end
+
+    test "adds tiebreakers in the column's direction" do
+      tiebreakers = %{"name" => ["email", "id"]}
+
+      assert sorted_by([{"name", :asc}], tiebreakers) == [name: :asc, email: :asc, id: :asc]
+    end
+
+    test "puts tiebreakers after all of the sorts" do
+      tiebreakers = %{"name" => ["id"]}
+
+      assert sorted_by([{"name", :desc}, {"email", :asc}], tiebreakers) ==
+               [name: :desc, email: :asc, id: :desc]
+    end
+
+    test "leaves a field that is already sorted by alone" do
+      tiebreakers = %{"name" => ["name", "email"]}
+
+      assert sorted_by([{"name", :desc}, {"email", :asc}], tiebreakers) ==
+               [name: :desc, email: :asc]
+    end
+
+    test "leaves a sort without tiebreakers alone" do
+      assert sorted_by([{"name", :asc}], %{"email" => ["id"]}) == [name: :asc]
+    end
+  end
+
   describe "apply_sorting/2" do
     test "returns query unchanged when no sorting" do
       query = %MockQuerySorts{resource: TestResource}
@@ -782,24 +810,25 @@ defmodule Cinder.QueryBuilderTest do
       end
     end
 
-    test "supports all embedded field sorting patterns - GitHub issue #51" do
-      query = Ash.Query.new(TestUser)
+    test "sorts by embedded and nested embedded fields - GitHub issue #51" do
+      for {first_name, street} <- [{"b", "x"}, {"c", "z"}, {"a", "y"}] do
+        Ash.Seed.seed!(TestUser, %{
+          name: first_name,
+          profile: %{first_name: first_name},
+          settings: %{address: %{street: street}}
+        })
+      end
 
-      # Test basic embedded field
-      basic_result = QueryBuilder.apply_sorting(query, [{"profile__first_name", :asc}])
-      assert length(basic_result.sort) == 1
+      sorted_names = fn sort ->
+        TestUser
+        |> Ash.Query.new()
+        |> QueryBuilder.apply_sorting(sort)
+        |> Ash.read!()
+        |> Enum.map(& &1.name)
+      end
 
-      # Test nested embedded field
-      nested_result = QueryBuilder.apply_sorting(query, [{"settings__address__street", :desc}])
-      assert length(nested_result.sort) == 1
-
-      # Test that embedded fields get converted to calc expressions (not rejected)
-      assert length(basic_result.sort) == 1
-      # No NoSuchField errors
-      assert Enum.empty?(basic_result.errors)
-
-      assert length(nested_result.sort) == 1
-      assert Enum.empty?(nested_result.errors)
+      assert sorted_names.([{"profile__first_name", :asc}]) == ["a", "b", "c"]
+      assert sorted_names.([{"settings__address__street", :desc}]) == ["c", "a", "b"]
     end
 
     test "handles invalid sort_by input gracefully without Protocol.UndefinedError" do
@@ -1084,30 +1113,6 @@ defmodule Cinder.QueryBuilderTest do
       assert result == [{"name", :desc}, {"email", :asc}]
     end
 
-    test "toggle behavior starting from query-extracted desc sort" do
-      # This test documents the issue: when starting with desc from query,
-      # the toggle cycle is: desc -> none -> asc -> desc -> none
-      # User expects: desc -> asc -> desc -> none
-
-      # From query extraction
-      initial_sort = [{"name", :desc}]
-
-      # First click: desc -> none (current behavior)
-      sort_after_click_1 = QueryBuilder.toggle_sort_direction(initial_sort, "name")
-      assert sort_after_click_1 == []
-
-      # Second click: none -> asc
-      sort_after_click_2 = QueryBuilder.toggle_sort_direction(sort_after_click_1, "name")
-      assert sort_after_click_2 == [{"name", :asc}]
-
-      # Third click: asc -> desc
-      sort_after_click_3 = QueryBuilder.toggle_sort_direction(sort_after_click_2, "name")
-      assert sort_after_click_3 == [{"name", :desc}]
-
-      # This creates the confusing cycle: desc -> none -> asc -> desc -> none
-      # instead of the expected: desc -> asc -> desc -> none
-    end
-
     test "extracts sorts from embedded field calc expressions" do
       # When sorting on embedded fields, Cinder uses calc expressions like:
       # calc(get_path(^ref(:profile), [:first_name]))
@@ -1125,16 +1130,16 @@ defmodule Cinder.QueryBuilderTest do
     end
 
     test "extracts sorts from nested embedded field calc expressions" do
-      # Test nested embedded fields like settings__address__city
+      # Test nested embedded fields like settings__address__street
       query =
         TestUser
         |> Ash.Query.for_read(:read, %{}, domain: TestDomain)
-        |> QueryBuilder.apply_sorting([{"settings__address__city", :asc}])
+        |> QueryBuilder.apply_sorting([{"settings__address__street", :asc}])
 
-      columns = [%{field: "name"}, %{field: "settings__address__city"}]
+      columns = [%{field: "name"}, %{field: "settings__address__street"}]
 
       result = QueryBuilder.extract_query_sorts(query, columns)
-      assert result == [{"settings__address__city", :asc}]
+      assert result == [{"settings__address__street", :asc}]
     end
 
     test "extracts sorts from relationship field calc expressions" do
@@ -1349,21 +1354,19 @@ defmodule Cinder.QueryBuilderTest do
 
     test "query built from resource preserves filters and sorts" do
       # Reproduces the main bug: Resource |> Ash.Query.filter(...) loses modifications
+      for {name, email} <- [{"test", "b"}, {"other", "a"}, {"test", "a"}] do
+        Ash.Seed.seed!(TestUser, %{name: name, email: email})
+      end
+
       query_without_for_read =
         TestUser
         |> Ash.Query.filter(name == "test")
         |> Ash.Query.sort(:email)
 
-      expect(Ash, :read, fn query, _opts ->
-        send(self(), {:final_query, query})
-        {:ok, %Ash.Page.Offset{results: [], count: 0, limit: 25, offset: 0, more?: false}}
-      end)
+      {:ok, page} = QueryBuilder.build_and_execute(query_without_for_read, default_options())
 
-      QueryBuilder.build_and_execute(query_without_for_read, default_options())
-
-      assert_received {:final_query, final_query}
-      assert final_query.filter != nil
-      assert final_query.sort != []
+      # Only the filter's records, in the sort's order
+      assert Enum.map(page.results, &{&1.name, &1.email}) == [{"test", "a"}, {"test", "b"}]
     end
 
     test "query_opts applied to existing query" do
@@ -1449,19 +1452,11 @@ defmodule Cinder.QueryBuilderTest do
       assert result == query
     end
 
-    test "applies default search across single searchable column" do
-      query = Ash.Query.for_read(SearchTestResource, :read)
-      columns = [%{field: "title", searchable: true}]
-
-      result = QueryBuilder.apply_search(query, "widget", columns, nil)
-
-      # Should have applied a filter
-      assert result != query
-      assert result.filter != nil
-    end
-
-    test "applies default search across multiple searchable columns" do
-      query = Ash.Query.for_read(SearchTestResource, :read)
+    test "matches the term in any searchable column, and not in other columns" do
+      title = seed_search_record(title: "Blue widget")
+      description = seed_search_record(description: "a widget for the kitchen")
+      _status_only = seed_search_record(status: "widget")
+      _neither = seed_search_record(title: "Red gadget")
 
       columns = [
         %{field: "title", searchable: true},
@@ -1469,82 +1464,33 @@ defmodule Cinder.QueryBuilderTest do
         %{field: "status", searchable: false}
       ]
 
-      result = QueryBuilder.apply_search(query, "widget", columns, nil)
-
-      # Should have applied a filter combining title and description (but not status)
-      assert result != query
-      assert result.filter != nil
-
-      # Verify the query can actually be executed without errors
-      assert {:ok, _results} = Ash.read(result)
+      assert search_ids("widget", columns) == MapSet.new([title.id, description.id])
     end
 
-    test "multiple searchable columns create proper OR logic with query execution verification" do
-      query = Ash.Query.for_read(SearchTestResource, :read)
+    test "calls a custom search function instead of the default search" do
+      custom = seed_search_record(title: "custom match")
+      _default_match = seed_search_record(title: "widget")
 
-      # Test 2 columns
-      two_columns = [
-        %{field: "title", searchable: true},
-        %{field: "description", searchable: true}
-      ]
-
-      two_result = QueryBuilder.apply_search(query, "test", two_columns, nil)
-      assert two_result != query
-      assert two_result.filter != nil
-      assert {:ok, _results} = Ash.read(two_result)
-
-      # Test 3 columns for more complex OR logic
-      three_columns = [
-        %{field: "title", searchable: true},
-        %{field: "description", searchable: true},
-        %{field: "status", searchable: true}
-      ]
-
-      three_result = QueryBuilder.apply_search(query, "test", three_columns, nil)
-      assert three_result != query
-      assert three_result.filter != nil
-      assert {:ok, _results} = Ash.read(three_result)
-
-      # Verify single vs multiple field queries produce different filters
-      single_result =
-        QueryBuilder.apply_search(query, "test", [%{field: "title", searchable: true}], nil)
-
-      assert single_result.filter != two_result.filter
-      assert two_result.filter != three_result.filter
-    end
-
-    test "calls custom search function when provided" do
-      query = Ash.Query.for_read(SearchTestResource, :read)
-      columns = [%{field: "title", searchable: true}]
-
-      # Mock custom search function
       custom_search_fn = fn query, searchable_columns, search_term ->
-        assert search_term == "widget"
-        assert length(searchable_columns) == 1
-        assert hd(searchable_columns).field == "title"
-
-        # Return modified query for verification
-        Ash.Query.filter(query, title == "custom_search_applied")
+        send(self(), {:searched, Enum.map(searchable_columns, & &1.field), search_term})
+        Ash.Query.filter(query, title == "custom match")
       end
 
-      result = QueryBuilder.apply_search(query, "widget", columns, custom_search_fn)
+      columns = [%{field: "title", searchable: true}, %{field: "status", searchable: false}]
 
-      # Should have applied custom search function
-      assert result != query
-      assert result.filter != nil
+      assert search_ids("widget", columns, custom_search_fn) == MapSet.new([custom.id])
+      assert_received {:searched, ["title"], "widget"}
     end
 
-    test "handles URL-safe field notation in default search" do
+    @tag :capture_log
+    test "a searchable field the resource doesn't have (in embedded notation) is skipped, not an error" do
       query = Ash.Query.for_read(SearchTestResource, :read)
       columns = [%{field: "user__profile__name", searchable: true}]
 
-      # Should not crash even with complex field notation
-      result = QueryBuilder.apply_search(query, "test", columns, nil)
-
-      # The function should handle this gracefully (even if it doesn't work perfectly)
-      assert result != nil
+      assert QueryBuilder.apply_search(query, "test", columns, nil) == query
     end
 
+    @tag :capture_log
     test "handles errors gracefully and returns original query" do
       query = Ash.Query.for_read(SearchTestResource, :read)
       columns = [%{field: "nonexistent_field", searchable: true}]
@@ -1556,56 +1502,25 @@ defmodule Cinder.QueryBuilderTest do
       assert result == query
     end
 
-    test "handles mixed valid and invalid fields correctly" do
-      query = Ash.Query.for_read(SearchTestResource, :read)
+    @tag :capture_log
+    test "searches the fields the resource has, skipping the ones it doesn't" do
+      title = seed_search_record(title: "test title")
+      description = seed_search_record(description: "a test")
+      _neither = seed_search_record(title: "other")
 
       columns = [
-        # Valid field
         %{field: "title", searchable: true},
-        # Invalid field
         %{field: "nonexistent_field", searchable: true},
-        # Valid field
         %{field: "description", searchable: true}
       ]
 
-      result = QueryBuilder.apply_search(query, "test", columns, nil)
-
-      # Should create a search query using only the valid fields
-      assert result != query
-      assert result.filter != nil
-
-      # Should execute successfully (invalid field filtered out)
-      assert {:ok, _results} = Ash.read(result)
+      assert search_ids("test", columns) == MapSet.new([title.id, description.id])
     end
 
-    test "search query execution produces expected filter structure" do
-      query = Ash.Query.for_read(SearchTestResource, :read)
+    test "keeps the query's existing filters" do
+      active = seed_search_record(title: "widget", status: "active")
+      _inactive = seed_search_record(title: "widget", status: "inactive")
 
-      # Single field case
-      single_result =
-        QueryBuilder.apply_search(query, "test", [%{field: "title", searchable: true}], nil)
-
-      # Multiple field case
-      multi_result =
-        QueryBuilder.apply_search(
-          query,
-          "test",
-          [
-            %{field: "title", searchable: true},
-            %{field: "description", searchable: true}
-          ],
-          nil
-        )
-
-      # Both should execute successfully
-      assert {:ok, _results} = Ash.read(single_result)
-      assert {:ok, _results} = Ash.read(multi_result)
-
-      # Multi-field should have different (more complex) filter structure
-      assert single_result.filter != multi_result.filter
-    end
-
-    test "preserves existing query filters when applying search" do
       query =
         SearchTestResource
         |> Ash.Query.for_read(:read)
@@ -1613,13 +1528,21 @@ defmodule Cinder.QueryBuilderTest do
 
       columns = [%{field: "title", searchable: true}]
 
-      result = QueryBuilder.apply_search(query, "widget", columns, nil)
-
-      # Should have both the original filter and the new search filter
-      assert result != query
-      assert result.filter != nil
-      assert result.filter != query.filter
+      assert query
+             |> QueryBuilder.apply_search("widget", columns, nil)
+             |> Ash.read!()
+             |> MapSet.new(& &1.id) == MapSet.new([active.id])
     end
+  end
+
+  defp seed_search_record(attrs), do: Ash.Seed.seed!(SearchTestResource, Map.new(attrs))
+
+  defp search_ids(term, columns, search_fn \\ nil) do
+    SearchTestResource
+    |> Ash.Query.for_read(:read)
+    |> QueryBuilder.apply_search(term, columns, search_fn)
+    |> Ash.read!()
+    |> MapSet.new(& &1.id)
   end
 
   describe "scope, actor, and tenant — unprepared query (resource module)" do
@@ -1885,8 +1808,13 @@ defmodule Cinder.QueryBuilderTest do
       assert_received {:ash_read_called, query, _opts}
       # User's prep preserved
       assert get_in(query.context, [:private, :actor]) == :alice
-      # Cinder's filter applied
-      assert query.filter != nil
+
+      # Cinder's filter applied: running the query returns only the match
+      john = Ash.Seed.seed!(TestUser, %{name: "John Smith"})
+      _jane = Ash.Seed.seed!(TestUser, %{name: "Jane Doe"})
+
+      {:ok, page} = Mimic.call_original(Ash, :read, [query, []])
+      assert Enum.map(page.results, & &1.id) == [john.id]
     end
 
     test "explicit action option is ignored when query is already prepared (with warning)" do
@@ -2082,9 +2010,11 @@ defmodule Cinder.QueryBuilderTest do
         search_term: ""
       ]
 
+      john = Ash.Seed.seed!(TestUser, %{name: "John Smith"})
+      _jane = Ash.Seed.seed!(TestUser, %{name: "Jane Doe"})
+
       assert {:ok, %Ash.Query{} = query} = QueryBuilder.build_query(TestUser, options)
-      # The query should have a filter applied
-      assert query.filter != nil
+      assert Enum.map(Ash.read!(query), & &1.id) == [john.id]
     end
 
     test "returns {:ok, query} with sorts applied" do
@@ -2098,8 +2028,7 @@ defmodule Cinder.QueryBuilderTest do
       ]
 
       assert {:ok, %Ash.Query{} = query} = QueryBuilder.build_query(TestUser, options)
-      assert query.sort != nil
-      assert query.sort != []
+      assert query.sort == [name: :asc]
     end
 
     test "returns {:ok, query} with no pagination" do
@@ -2115,7 +2044,10 @@ defmodule Cinder.QueryBuilderTest do
       ]
 
       # build_query should NOT apply pagination even if page_size/current_page are passed
-      assert {:ok, %Ash.Query{}} = QueryBuilder.build_query(TestUser, options)
+      assert {:ok, %Ash.Query{} = query} = QueryBuilder.build_query(TestUser, options)
+      assert query.page == nil
+      assert query.limit == nil
+      assert query.offset in [nil, 0]
     end
 
     test "returns {:error, _} for invalid sort fields" do
@@ -2129,23 +2061,6 @@ defmodule Cinder.QueryBuilderTest do
       ]
 
       assert {:error, _message} = QueryBuilder.build_query(TestUser, options)
-    end
-
-    test "build_and_execute delegates to build_query internally" do
-      options = [
-        actor: nil,
-        filters: %{},
-        sort_by: [{"name", :asc}],
-        page_size: 10,
-        current_page: 1,
-        columns: [],
-        query_opts: [],
-        search_term: ""
-      ]
-
-      result = QueryBuilder.build_and_execute(TestUser, options)
-      assert {:ok, page} = result
-      assert is_list(page.results)
     end
   end
 end

@@ -1,7 +1,7 @@
 defmodule Cinder.Table.CustomFunctionsTest do
   use ExUnit.Case
 
-  alias Cinder.Table
+  alias Cinder.Collection
 
   # Mock functions for testing
   defp custom_filter_function(query, filter_config) do
@@ -19,7 +19,7 @@ defmodule Cinder.Table.CustomFunctionsTest do
         }
       ]
 
-      processed = Table.process_columns(col_slots, TestResource)
+      processed = Collection.process_columns(col_slots, TestResource)
       column = List.first(processed)
 
       assert column.sortable == false
@@ -38,7 +38,7 @@ defmodule Cinder.Table.CustomFunctionsTest do
         }
       ]
 
-      processed = Table.process_columns(col_slots, TestResource)
+      processed = Collection.process_columns(col_slots, TestResource)
       column = List.first(processed)
 
       assert column.sortable == true
@@ -56,56 +56,11 @@ defmodule Cinder.Table.CustomFunctionsTest do
         }
       ]
 
-      processed = Table.process_columns(col_slots, TestResource)
+      processed = Collection.process_columns(col_slots, TestResource)
       column = List.first(processed)
 
       assert column.sortable == false
       assert column.filterable == false
-      assert column.filter_fn == nil
-    end
-  end
-
-  describe "integration with existing functionality" do
-    test "custom filter functions work with existing Column struct fields" do
-      col_slots = [
-        %{
-          field: "name",
-          sort: true,
-          filter: [type: :text, fn: &custom_filter_function/2],
-          inner_block: fn -> "Name" end
-        }
-      ]
-
-      processed = Table.process_columns(col_slots, TestResource)
-      column = List.first(processed)
-
-      # Verify the functions are preserved and could be passed to QueryBuilder
-      assert column.sortable == true
-      assert column.filterable == true
-      assert is_function(column.filter_fn, 2)
-
-      # Verify other column properties are still correct
-      assert column.field == "name"
-      assert column.filter_type == :text
-    end
-
-    test "backward compatibility with existing boolean sort syntax" do
-      # Old syntax should continue to work
-      col_slots = [
-        %{
-          field: "name",
-          sort: true,
-          filter: :select,
-          inner_block: fn -> "Name" end
-        }
-      ]
-
-      processed = Table.process_columns(col_slots, TestResource)
-      column = List.first(processed)
-
-      assert column.sortable == true
-      assert column.filterable == true
-      # No custom function
       assert column.filter_fn == nil
     end
   end
@@ -130,7 +85,7 @@ defmodule Cinder.Table.CustomFunctionsTest do
         }
       ]
 
-      processed_columns = Table.process_columns(col_slots, TestResource)
+      processed_columns = Collection.process_columns(col_slots, TestResource)
 
       # Convert to QueryBuilder format
       columns =

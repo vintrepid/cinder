@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Vince Nibler
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.HEExTransforms do
   @moduledoc """
   HEEx tree transforms used by `mix cinder.gen.collection` when

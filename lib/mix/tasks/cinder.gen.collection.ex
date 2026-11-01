@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Vince Nibler
+#
+# SPDX-License-Identifier: MIT
+
 if Code.ensure_loaded?(Igniter) do
   defmodule Mix.Tasks.Cinder.Gen.Collection do
     @compile {:no_warn_undefined, [{MaestroTool.HEExParser, :parse, 1}]}

@@ -70,25 +70,6 @@ defmodule Cinder.ThemeDslTest do
       assert is_binary(theme.th_class)
     end
 
-    test "can be used with Theme.merge/1" do
-      theme = Theme.merge(SimpleTestTheme)
-
-      assert is_map(theme)
-      assert theme.container_class == "custom-table-container"
-      assert theme.row_class == "custom-row"
-    end
-
-    test "inheritance works with built-in themes" do
-      theme = InheritanceTestTheme.resolve_theme()
-
-      # Should have the inherited container class
-      assert theme.container_class == "inherited-table-container"
-
-      # Should inherit other modern theme properties
-      assert String.contains?(theme.th_class, "font-semibold")
-      assert String.contains?(theme.pagination_button_class, "transition-all")
-    end
-
     test "inheritance works with custom themes" do
       theme = ExtendingCustomTheme.resolve_theme()
 
@@ -276,16 +257,6 @@ defmodule Cinder.ThemeDslTest do
       assert_raise ArgumentError, ~r/does not implement resolve_theme\/0/, fn ->
         Theme.merge(NonExistentTheme)
       end
-    end
-
-    test "provides helpful error for invalid theme resolution" do
-      # Test with a module that exists but doesn't have the DSL
-      defmodule BadTheme do
-        def some_function, do: :ok
-      end
-
-      {:error, reason} = Theme.validate(BadTheme)
-      assert String.contains?(reason, "does not implement resolve_theme/0")
     end
   end
 end

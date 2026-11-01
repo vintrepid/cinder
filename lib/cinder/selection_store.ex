@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Vince Nibler
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Selection.Store do
   @moduledoc """
   Pluggable storage for a user's absolute collection selection.

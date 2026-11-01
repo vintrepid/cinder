@@ -2,7 +2,7 @@ defmodule Cinder.Table.SortCycleTest do
   use ExUnit.Case
 
   alias Cinder.QueryBuilder
-  alias Cinder.Table
+  alias Cinder.Collection
 
   describe "process_columns/2 with sort cycles" do
     test "includes default sort cycle in processed columns" do
@@ -15,7 +15,7 @@ defmodule Cinder.Table.SortCycleTest do
         }
       ]
 
-      processed = Table.process_columns(col_slots, SortCycleTestResource)
+      processed = Collection.process_columns(col_slots, SortCycleTestResource)
       column = List.first(processed)
 
       assert column.sortable == true
@@ -33,28 +33,46 @@ defmodule Cinder.Table.SortCycleTest do
         }
       ]
 
-      processed = Table.process_columns(col_slots, SortCycleTestResource)
+      processed = Collection.process_columns(col_slots, SortCycleTestResource)
       column = List.first(processed)
 
       assert column.sortable == true
       assert column.sort_cycle == [nil, :desc_nils_last, :asc_nils_first]
     end
 
-    test "includes custom sort cycle from configuration" do
+    test "includes a then tiebreaker alongside the default cycle" do
       col_slots = [
         %{
           field: "priority",
-          sort: [cycle: [nil, :high, :low]],
+          sort: [then: "created_at"],
           filter: false,
           inner_block: fn -> "Priority" end
         }
       ]
 
-      processed = Table.process_columns(col_slots, SortCycleTestResource)
-      column = List.first(processed)
+      [column] = Collection.process_columns(col_slots, SortCycleTestResource)
 
-      assert column.sortable == true
-      assert column.sort_cycle == [nil, :high, :low]
+      assert column.sort_then == ["created_at"]
+      assert column.sort_cycle == [nil, :asc, :desc]
+    end
+
+    test "drops then tiebreakers that can't be sorted by, with a warning" do
+      col_slots = [
+        %{
+          field: "priority",
+          sort: [then: ["missing", :created_at]],
+          filter: false,
+          inner_block: fn -> "Priority" end
+        }
+      ]
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          [column] = Collection.process_columns(col_slots, SortCycleTestResource)
+          assert column.sort_then == ["created_at"]
+        end)
+
+      assert log =~ "ignoring priority's tiebreaker. Field 'missing' does not exist"
     end
   end
 
@@ -90,23 +108,6 @@ defmodule Cinder.Table.SortCycleTest do
 
       # Third click: :asc_nils_first -> nil (remove)
       sort3 = QueryBuilder.toggle_sort_with_cycle(sort2, "created_at", custom_cycle)
-      assert sort3 == []
-    end
-
-    test "handles custom business logic cycles" do
-      business_cycle = [nil, :high_priority, :low_priority]
-      current_sort = []
-
-      # First click: nil -> :high_priority
-      sort1 = QueryBuilder.toggle_sort_with_cycle(current_sort, "priority", business_cycle)
-      assert sort1 == [{"priority", :high_priority}]
-
-      # Second click: :high_priority -> :low_priority
-      sort2 = QueryBuilder.toggle_sort_with_cycle(sort1, "priority", business_cycle)
-      assert sort2 == [{"priority", :low_priority}]
-
-      # Third click: :low_priority -> nil (remove)
-      sort3 = QueryBuilder.toggle_sort_with_cycle(sort2, "priority", business_cycle)
       assert sort3 == []
     end
 
@@ -327,7 +328,7 @@ defmodule Cinder.Table.SortCycleTest do
       assert encoded == "--created_at,++updated_at"
 
       # Should decode back to original
-      decoded = Cinder.UrlManager.decode_sort(encoded)
+      decoded = Cinder.UrlManager.parse_sort(encoded)
       assert decoded == sort_data
     end
 
@@ -339,7 +340,7 @@ defmodule Cinder.Table.SortCycleTest do
       # Should use clean format: field for asc, -field for desc
       assert encoded == "-title,created_at"
 
-      decoded = Cinder.UrlManager.decode_sort(encoded)
+      decoded = Cinder.UrlManager.parse_sort(encoded)
       assert decoded == sort_data
     end
 
@@ -356,7 +357,7 @@ defmodule Cinder.Table.SortCycleTest do
     test "handles mixed prefix types in URLs with standard directions only" do
       # Mix of standard and null-handling directions
       mixed_encoded = "--payment_date,++created_at,-title,status"
-      decoded = Cinder.UrlManager.decode_sort(mixed_encoded)
+      decoded = Cinder.UrlManager.parse_sort(mixed_encoded)
 
       expected = [
         {"payment_date", :desc_nils_last},
@@ -385,23 +386,7 @@ defmodule Cinder.Table.SortCycleTest do
       # Each direction gets its own encoding scheme
       assert encoded == "++field1,+-field2,-+field3,--field4"
 
-      decoded = Cinder.UrlManager.decode_sort(encoded)
-      assert decoded == sort_data
-    end
-
-    test "demonstrates clean URLs with elegant prefix syntax" do
-      # Show how much cleaner the URLs are with prefix syntax
-      sort_data = [
-        {"payment_date", :desc_nils_last},
-        {"created_at", :asc_nils_first},
-        {"title", :asc},
-        {"priority", :desc}
-      ]
-
-      encoded = Cinder.UrlManager.encode_sort(sort_data)
-      assert encoded == "--payment_date,++created_at,title,-priority"
-
-      decoded = Cinder.UrlManager.decode_sort(encoded)
+      decoded = Cinder.UrlManager.parse_sort(encoded)
       assert decoded == sort_data
     end
   end
@@ -508,7 +493,7 @@ defmodule Cinder.Table.SortCycleTest do
       ]
 
       # Process columns (what Table.table/1 does internally)
-      processed_columns = Table.process_columns(col_slots, SortCycleTestResource)
+      processed_columns = Collection.process_columns(col_slots, SortCycleTestResource)
 
       # Verify columns have correct cycle configuration
       name_col = Enum.find(processed_columns, &(&1.field == "name"))

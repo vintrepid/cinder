@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Themes.Compact do
   @moduledoc """
   A compact theme with minimal spacing and high density for maximum information display.
@@ -104,7 +108,7 @@ defmodule Cinder.Themes.Compact do
   set :filter_checkbox_container_class, "flex items-center h-[34px]"
 
   set :filter_checkbox_input_class,
-      "h-3 w-3 bg-white border-gray-300 checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-1 cursor-pointer mr-1"
+      "h-3 w-3 bg-white border-gray-300 rounded checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-1 cursor-pointer mr-1"
 
   set :filter_checkbox_label_class, "text-xs font-medium text-gray-700 cursor-pointer"
   # Multi-select filter (tag-based interface)
@@ -128,7 +132,7 @@ defmodule Cinder.Themes.Compact do
   set :filter_multicheckboxes_option_class, "flex items-center space-x-1"
 
   set :filter_multicheckboxes_checkbox_class,
-      "h-3 w-3 bg-white border-gray-300 rounded checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-1 cursor-pointer"
+      "h-3 w-3 bg-white border-gray-300 rounded checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-1 cursor-pointer mr-1"
 
   set :filter_multicheckboxes_label_class, "text-xs font-medium text-gray-700 cursor-pointer"
   # Range filters
@@ -155,7 +159,8 @@ defmodule Cinder.Themes.Compact do
   set :page_size_dropdown_class,
       "flex items-center px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all duration-150 cursor-pointer"
 
-  set :page_size_dropdown_container_class, "bg-white border border-gray-300 rounded shadow-lg"
+  set :page_size_dropdown_container_class,
+      "bg-white border border-gray-300 rounded shadow-lg overflow-hidden"
 
   set :page_size_option_class,
       "w-full text-left px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
@@ -207,7 +212,9 @@ defmodule Cinder.Themes.Compact do
       "cursor-pointer hover:shadow transition-shadow duration-100"
 
   # Selection
-  set :selection_checkbox_class, "w-3 h-3 text-blue-600 border-gray-300 focus:ring-blue-500"
+  set :selection_checkbox_class,
+      "h-3 w-3 bg-white border-gray-300 rounded checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-1 cursor-pointer"
+
   set :selected_row_class, "bg-blue-50"
   set :grid_selection_overlay_class, "mb-1"
   set :selected_item_class, "ring-1 ring-blue-500"

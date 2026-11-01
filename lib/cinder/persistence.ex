@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Vince Nibler
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Persistence do
   @moduledoc """
   Pluggable persistence for collection state (filters, sort, search, page, etc.).

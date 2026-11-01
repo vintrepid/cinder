@@ -1,10 +1,11 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder do
   @moduledoc """
-  Cinder is a powerful, intelligent data table component for Phoenix LiveView applications with seamless Ash Framework integration.
-
-  ## Quick Start
-
-  The simplest way to display a collection is with `Cinder.collection`:
+  Tables, lists and grids of Ash resources in Phoenix LiveView, with filtering, sorting, search
+  and pagination.
 
   ```heex
   <Cinder.collection resource={MyApp.User} actor={@current_user}>
@@ -13,18 +14,9 @@ defmodule Cinder do
   </Cinder.collection>
   ```
 
-  You can also use different layouts:
+  For a list or grid, describe each item with an `<:item>` slot:
 
   ```heex
-  <!-- List layout -->
-  <Cinder.collection resource={MyApp.User} actor={@current_user} layout={:list}>
-    <:col field="name" filter sort />
-    <:item :let={user}>
-      <div class="p-4">{user.name}</div>
-    </:item>
-  </Cinder.collection>
-
-  <!-- Grid layout -->
   <Cinder.collection resource={MyApp.User} actor={@current_user} layout={:grid}>
     <:col field="name" filter sort />
     <:item :let={user}>
@@ -33,110 +25,16 @@ defmodule Cinder do
   </Cinder.collection>
   ```
 
-  The `Cinder.Table.table` component is also available for table-specific usage:
+  This module holds the component, `collection/1` (see `Cinder.Collection` for its attributes),
+  and functions for changing a collection from your LiveView:
 
-  ```heex
-  # Using resource parameter
-  <Cinder.Table.table resource={MyApp.User} actor={@current_user}>
-    <:col :let={user} field="name" filter sort>{user.name}</:col>
-    <:col :let={user} field="email" filter>{user.email}</:col>
-    <:col :let={user} field="created_at" sort>{user.created_at}</:col>
-  </Cinder.Table.table>
+  - `refresh_table/2,3` and `refresh_tables/2,3` re-read collections.
+  - `update_item/4`, `update_items/4`, `update_if_visible/4` and `update_items_if_visible/4` change
+    rows on screen without re-reading.
+  - `remove_item/3` and `remove_items/3` take rows off the page.
 
-  # Using query parameter
-  <Cinder.Table.table query={MyApp.User} actor={@current_user}>
-    <:col :let={user} field="name" filter sort>{user.name}</:col>
-    <:col :let={user} field="email" filter>{user.email}</:col>
-    <:col :let={user} field="created_at" sort>{user.created_at}</:col>
-  </Cinder.Table.table>
-
-  # Advanced query usage
-  <Cinder.Table.table query={MyApp.User |> Ash.Query.filter(active: true)} actor={@current_user}>
-    <:col :let={user} field="name" filter sort>{user.name}</:col>
-    <:col :let={user} field="email" filter>{user.email}</:col>
-    <:col :let={user} field="created_at" sort>{user.created_at}</:col>
-  </Cinder.Table.table>
-  ```
-
-  ## Custom Filters
-
-  Cinder supports custom filter types through a simple configuration-based approach:
-
-      # 1. Configure your filters in config.exs
-      config :cinder, :filters, [
-        slider: MyApp.Filters.Slider,
-        color_picker: MyApp.Filters.ColorPicker
-      ]
-
-      # 2. Set up Cinder in your application.ex
-      def start(_type, _args) do
-        Cinder.setup()  # Automatically registers all configured filters
-        # ... rest of application startup
-      end
-
-      # 3. Create custom filters with minimal boilerplate
-      defmodule MyApp.Filters.Slider do
-        use Cinder.Filter  # Includes everything you need
-
-        @impl true
-        def render(column, current_value, theme, assigns) do
-          # Your filter implementation with HEEx templates
-        end
-
-        @impl true
-        def process(raw_value, column) do
-          # Transform form input to filter value
-        end
-
-        @impl true
-        def validate(filter_value), do: # Validate filter value
-
-        @impl true
-        def default_options, do: [min: 0, max: 100, step: 1]
-
-        @impl true
-        def empty?(value), do: # Check if filter is empty
-      end
-
-      # 4. Use in your tables
-      <:col field="price" filter={:slider} filter_options={[min: 0, max: 1000]}>
-        ${product.price}
-      </:col>
-
-  That's it! No manual registration, no complex setup - just configure and use.
-
-  ## Key Features
-
-  - **Intelligent Defaults**: Automatic filter type detection from Ash resource attributes
-  - **Minimal Configuration**: 70% fewer attributes required compared to traditional table components
-  - **URL State Management**: Filters, pagination, and sorting synchronized with browser URL
-  - **Relationship Support**: Dot notation for related fields (e.g., `user.department.name`)
-  - **Custom Filters**: Pluggable filter system with configuration-based registration
-  - **Flexible Theming**: Built-in presets and full customization
-  - **Ash Integration**: Native support for Ash Framework resources and authorization
-
-  ## Main Components
-
-  - `Cinder.collection/1` - Unified collection component (table, list, or grid layouts)
-  - `Cinder.Table` - The table component
-  - `Cinder.Table.UrlSync` - URL state management helper
-  - `Cinder.Table.Refresh` - Table refresh helpers
-  - `Cinder.Filter` - Base behavior for custom filters
-  - `Cinder.setup/0` - One-time setup for custom filters
-
-  ## Table Refresh Functions
-
-  For convenience, table refresh functions are available directly from the main module:
-
-      import Cinder.Table.Refresh
-
-      # Or use fully qualified names
-      def handle_event("delete", %{"id" => id}, socket) do
-        # ... delete logic ...
-        {:noreply, Cinder.Table.Refresh.refresh_table(socket, "my-table")}
-      end
-
-  For comprehensive examples and documentation, see the [README](readme.html) and [Examples](examples.html).
+  See the [Getting Started](getting-started.html) guide to begin, and
+  [Custom Filters](custom-filters.html) to write your own filter types.
   """
 
   # Unified collection component
@@ -144,13 +42,17 @@ defmodule Cinder do
 
   # Refresh functions
   defdelegate refresh_table(socket, table_id), to: Cinder.Refresh
+  defdelegate refresh_table(socket, table_id, opts), to: Cinder.Refresh
   defdelegate refresh_tables(socket, table_ids), to: Cinder.Refresh
+  defdelegate refresh_tables(socket, table_ids, opts), to: Cinder.Refresh
 
-  # In-memory update functions (efficient for small PubSub-driven changes)
+  # In-memory change functions (efficient for small PubSub-driven changes)
   defdelegate update_item(socket, collection_id, id, update_fn), to: Cinder.Update
   defdelegate update_items(socket, collection_id, ids, update_fn), to: Cinder.Update
   defdelegate update_if_visible(socket, collection_id, id, update_fn), to: Cinder.Update
   defdelegate update_items_if_visible(socket, collection_id, ids, update_fn), to: Cinder.Update
+  defdelegate remove_item(socket, collection_id, id), to: Cinder.Update
+  defdelegate remove_items(socket, collection_id, ids), to: Cinder.Update
 
   @doc """
   Sets up Cinder with configured custom filters.
@@ -208,6 +110,7 @@ defmodule Cinder do
       # => :ok
       # Logs the `cinder.filters.registration_failed` event with an error count.
   """
+  @deprecated "Custom filters are read from configuration; setup is no longer required"
   def setup do
     case Cinder.Filters.Registry.register_config_filters() do
       :ok ->

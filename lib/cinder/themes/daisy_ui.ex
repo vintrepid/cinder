@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Themes.DaisyUI do
   @moduledoc """
   A DaisyUI-compatible theme following daisyUI design system.
@@ -19,20 +23,20 @@ defmodule Cinder.Themes.DaisyUI do
   set :table_toolbar_class,
       "cinder-sticky-toolbar sticky top-16 z-40 mb-3 flex h-12 flex-nowrap items-center gap-3 overflow-visible border-b border-base-300 bg-base-100/95 px-3 py-1 shadow-sm backdrop-blur"
 
-  set :table_wrapper_class, "card card-border bg-base-100"
+  set :table_wrapper_class, "card card-border bg-base-100 overflow-x-auto"
   set :table_class, "table table-zebra w-full"
   set :thead_class, ""
   set :tbody_class, ""
   set :header_row_class, ""
   set :row_class, ""
-  set :th_class, "text-left font-semibold whitespace-nowrap"
-  set :td_class, ""
+  set :th_class, "text-left font-semibold whitespace-nowrap px-6"
+  set :td_class, "px-6"
   set :empty_class, "text-center py-8 text-base-content/60"
   set :error_container_class, "alert alert-error"
   set :error_message_class, ""
 
   # Filters
-  set :filter_container_class, "card-body"
+  set :filter_container_class, ""
   set :filter_header_class, "card-title justify-between"
   set :filter_title_class, "flex items-center gap-2"
   set :filter_count_class, "badge badge-primary badge-sm"
@@ -89,8 +93,8 @@ defmodule Cinder.Themes.DaisyUI do
   # Multi-checkboxes filter
   set :filter_multicheckboxes_container_class, "space-y-2"
   set :filter_multicheckboxes_option_class, "flex items-center gap-2"
-  set :filter_multicheckboxes_checkbox_class, "checkbox checkbox-primary"
-  set :filter_multicheckboxes_label_class, "label-text cursor-pointer"
+  set :filter_multicheckboxes_checkbox_class, "checkbox checkbox-sm mr-2"
+  set :filter_multicheckboxes_label_class, "text-sm cursor-pointer"
   # Range filters
   set :filter_range_container_class, "flex items-center gap-2"
   set :filter_range_input_group_class, ""
@@ -109,19 +113,21 @@ defmodule Cinder.Themes.DaisyUI do
   set :pagination_current_class, "btn btn-primary btn-sm"
   set :page_size_container_class, "flex items-center space-x-2"
   set :page_size_label_class, "text-base-content/70 text-sm"
-  set :page_size_dropdown_class, "btn btn-sm btn-outline flex items-center cursor-pointer"
+
+  set :page_size_dropdown_class,
+      "select select-bordered select-sm flex items-center cursor-pointer [&_svg]:hidden"
 
   set :page_size_dropdown_container_class,
-      "bg-base-100 border border-base-300 rounded-box shadow-lg"
+      "bg-base-100 border border-base-300 rounded-box shadow-lg overflow-hidden"
 
   set :page_size_option_class,
-      "w-full text-left px-3 py-2 text-sm hover:bg-base-200 cursor-pointer"
+      "w-full text-left px-3 py-2 text-sm hover:bg-base-200 hover:text-base-content cursor-pointer"
 
   set :page_size_selected_class, "bg-primary text-primary-content"
 
   # Search
   set :search_input_class,
-      "input input-bordered w-full pl-10"
+      "input input-bordered w-48 pl-10"
 
   set :search_icon_class, "w-4 h-4"
 
@@ -140,8 +146,8 @@ defmodule Cinder.Themes.DaisyUI do
   set :loading_spinner_path_class, ""
 
   # List
-  set :list_container_class, "space-y-4 px-4"
-  set :list_item_class, "card card-body bg-base-100 shadow-md text-base-content"
+  set :list_container_class, "space-y-4"
+  set :list_item_class, "card card-border card-body bg-base-100 shadow-sm text-base-content"
 
   set :list_item_clickable_class,
       "cursor-pointer hover:shadow-lg transition-shadow"
@@ -149,7 +155,7 @@ defmodule Cinder.Themes.DaisyUI do
   # Sort container - card-like panel matching filter styling
   set :sort_container_class, "card bg-base-100"
   # Sort controls - inner flex layout (card-body for consistent padding)
-  set :sort_controls_class, "card-body py-4 flex flex-row items-center gap-3"
+  set :sort_controls_class, "pt-4 flex flex-row items-center gap-3"
   set :sort_controls_label_class, "text-sm font-medium"
   set :sort_buttons_class, "flex gap-2"
   set :sort_button_class, "btn btn-sm"
@@ -157,8 +163,8 @@ defmodule Cinder.Themes.DaisyUI do
   set :sort_button_inactive_class, "btn-ghost"
 
   # Grid
-  set :grid_container_class, "grid gap-4 px-4"
-  set :grid_item_class, "card card-body bg-base-100 shadow-md text-base-content"
+  set :grid_container_class, "grid gap-4"
+  set :grid_item_class, "card card-border card-body bg-base-100 shadow-sm text-base-content"
 
   set :grid_item_clickable_class,
       "cursor-pointer hover:shadow-lg transition-shadow"

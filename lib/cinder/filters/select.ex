@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filters.Select do
   @moduledoc """
   Select dropdown filter implementation for Cinder tables.
@@ -113,10 +117,13 @@ defmodule Cinder.Filters.Select do
   end
 
   @impl true
-  def process(raw_value, _column) when is_binary(raw_value) do
+  def process(raw_value, column) when is_binary(raw_value) do
     trimmed = String.trim(raw_value)
+    filter_options = Map.get(column, :filter_options, [])
 
-    if trimmed == "" or trimmed == "all" do
+    # A value from the client that isn't among the options can't be used: no filter
+    if trimmed == "" or trimmed == "all" or
+         not Cinder.Filter.Helpers.client_value_allowed?(trimmed, filter_options) do
       nil
     else
       %{

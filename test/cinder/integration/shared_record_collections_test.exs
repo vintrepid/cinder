@@ -8,8 +8,8 @@ defmodule Cinder.Integration.SharedRecordCollectionsTest do
     record = generate(album(title: "Shared record", artist_id: artist.id))
 
     on_exit(fn ->
-      Ash.bulk_destroy!(Cinder.Integration.Album, :destroy, %{})
-      Ash.bulk_destroy!(Cinder.Integration.Artist, :destroy, %{})
+      Ash.bulk_destroy!(Music.Album, :destroy, %{})
+      Ash.bulk_destroy!(Music.Artist, :destroy, %{})
     end)
 
     path = Cinder.TestLive.Fixture.register(&collections/1)
@@ -29,10 +29,10 @@ defmodule Cinder.Integration.SharedRecordCollectionsTest do
 
   defp collections(assigns) do
     ~H"""
-    <Cinder.collection id="recent" resource={Cinder.Integration.Album}>
+    <Cinder.collection id="recent" resource={Music.Album}>
       <:col :let={album} field="title">{album.title}</:col>
     </Cinder.collection>
-    <Cinder.collection id="all" resource={Cinder.Integration.Album}>
+    <Cinder.collection id="all" resource={Music.Album}>
       <:col :let={album} field="title">{album.title}</:col>
     </Cinder.collection>
     """

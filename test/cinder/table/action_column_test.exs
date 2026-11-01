@@ -1,7 +1,7 @@
 defmodule Cinder.ActionColumnTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Table
+  alias Cinder.Collection
 
   # Mock Ash resource for testing
   defmodule TestUser do
@@ -32,7 +32,7 @@ defmodule Cinder.ActionColumnTest do
         inner_block: fn _item -> "Edit | Delete" end
       }
 
-      [column] = Table.process_columns([action_column], TestUser)
+      [column] = Collection.process_columns([action_column], TestUser)
 
       assert column.field == nil
       assert column.label == "Actions"
@@ -48,24 +48,9 @@ defmodule Cinder.ActionColumnTest do
         inner_block: fn _item -> "Edit | Delete" end
       }
 
-      [column] = Table.process_columns([action_column], TestUser)
+      [column] = Collection.process_columns([action_column], TestUser)
 
       assert column.field == ""
-      assert column.label == "Actions"
-      assert column.filterable == false
-      assert column.sortable == false
-    end
-
-    test "action column with nil field is processed correctly" do
-      action_column = %{
-        field: nil,
-        label: "Actions",
-        inner_block: fn _item -> "Edit | Delete" end
-      }
-
-      [column] = Table.process_columns([action_column], TestUser)
-
-      assert column.field == nil
       assert column.label == "Actions"
       assert column.filterable == false
       assert column.sortable == false
@@ -78,7 +63,7 @@ defmodule Cinder.ActionColumnTest do
         inner_block: fn _item -> "Edit | Delete" end
       }
 
-      [column] = Table.process_columns([action_column], TestUser)
+      [column] = Collection.process_columns([action_column], TestUser)
 
       assert column.field == nil
       assert column.label == "Actions"
@@ -94,7 +79,7 @@ defmodule Cinder.ActionColumnTest do
         %{label: "Delete", inner_block: fn _item -> "Delete" end}
       ]
 
-      processed = Table.process_columns(columns, TestUser)
+      processed = Collection.process_columns(columns, TestUser)
 
       assert length(processed) == 3
 
@@ -127,7 +112,7 @@ defmodule Cinder.ActionColumnTest do
         %{label: "More Actions", inner_block: fn _item -> "Delete" end}
       ]
 
-      processed = Table.process_columns(columns, TestUser)
+      processed = Collection.process_columns(columns, TestUser)
 
       assert length(processed) == 4
       assert Enum.at(processed, 0).field == "name"
@@ -150,7 +135,7 @@ defmodule Cinder.ActionColumnTest do
       assert_raise ArgumentError,
                    ~r/column with filter attribute\(s\) requires a 'field' attribute/,
                    fn ->
-                     Table.process_columns([invalid_column], TestUser)
+                     Collection.process_columns([invalid_column], TestUser)
                    end
     end
 
@@ -164,7 +149,7 @@ defmodule Cinder.ActionColumnTest do
       assert_raise ArgumentError,
                    ~r/column with sort attribute\(s\) requires a 'field' attribute/,
                    fn ->
-                     Table.process_columns([invalid_column], TestUser)
+                     Collection.process_columns([invalid_column], TestUser)
                    end
     end
 
@@ -179,7 +164,7 @@ defmodule Cinder.ActionColumnTest do
       assert_raise ArgumentError,
                    ~r/column with filter sort attribute\(s\) requires a 'field' attribute/,
                    fn ->
-                     Table.process_columns([invalid_column], TestUser)
+                     Collection.process_columns([invalid_column], TestUser)
                    end
     end
 
@@ -191,7 +176,7 @@ defmodule Cinder.ActionColumnTest do
       }
 
       try do
-        Table.process_columns([invalid_column], TestUser)
+        Collection.process_columns([invalid_column], TestUser)
       rescue
         error in ArgumentError ->
           message = Exception.message(error)
@@ -199,53 +184,6 @@ defmodule Cinder.ActionColumnTest do
           assert String.contains?(message, "Add a field: <:col field=\"field_name\" filter>")
           assert String.contains?(message, "Remove filter attribute(s) for action columns")
       end
-    end
-  end
-
-  describe "table rendering with action columns" do
-    test "table component accepts action columns without field" do
-      # This test verifies that the full table component works with action columns
-      # We can't easily test the full LiveView rendering without a more complex setup,
-      # but we can test that the component processes the slots correctly
-
-      assigns = %{
-        col: [
-          %{field: "name", filter: true, sort: true},
-          %{label: "Actions"}
-        ]
-      }
-
-      processed_columns = Table.process_columns(assigns.col, TestUser)
-
-      # Should have both columns processed without error
-      assert length(processed_columns) == 2
-      assert Enum.at(processed_columns, 0).field == "name"
-      assert Enum.at(processed_columns, 1).field == nil
-      assert Enum.at(processed_columns, 1).label == "Actions"
-    end
-
-    test "action columns don't affect filter display logic" do
-      # Action columns should not trigger filter display since they're not filterable
-      action_only_columns = [
-        %{label: "Edit"},
-        %{label: "Delete"}
-      ]
-
-      processed = Table.process_columns(action_only_columns, TestUser)
-
-      # Simulate the determine_show_filters logic
-      any_filterable = Enum.any?(processed, & &1.filterable)
-      assert any_filterable == false
-
-      # Mix with filterable column
-      mixed_columns = [
-        %{field: "name", filter: true},
-        %{label: "Actions"}
-      ]
-
-      processed_mixed = Table.process_columns(mixed_columns, TestUser)
-      any_filterable_mixed = Enum.any?(processed_mixed, & &1.filterable)
-      assert any_filterable_mixed == true
     end
   end
 
@@ -259,7 +197,7 @@ defmodule Cinder.ActionColumnTest do
         class: "w-32"
       }
 
-      [column] = Table.process_columns([data_column], TestUser)
+      [column] = Collection.process_columns([data_column], TestUser)
 
       assert column.field == "name"
       assert column.label == "Name"
@@ -275,7 +213,7 @@ defmodule Cinder.ActionColumnTest do
         %{field: "active", filter: :boolean}
       ]
 
-      processed = Table.process_columns(data_columns, TestUser)
+      processed = Collection.process_columns(data_columns, TestUser)
 
       assert length(processed) == 3
       assert Enum.all?(processed, fn col -> col.field != nil end)
@@ -291,7 +229,7 @@ defmodule Cinder.ActionColumnTest do
         inner_block: fn _item -> "..." end
       }
 
-      [column] = Table.process_columns([action_column], TestUser)
+      [column] = Collection.process_columns([action_column], TestUser)
 
       assert column.field == nil
       assert column.label == ""
@@ -304,7 +242,7 @@ defmodule Cinder.ActionColumnTest do
         label: "Actions"
       }
 
-      [column] = Table.process_columns([action_column], TestUser)
+      [column] = Collection.process_columns([action_column], TestUser)
 
       assert column.field == nil
       assert column.label == "Actions"
@@ -320,7 +258,7 @@ defmodule Cinder.ActionColumnTest do
         filter: false
       }
 
-      [column] = Table.process_columns([action_column], TestUser)
+      [column] = Collection.process_columns([action_column], TestUser)
 
       assert column.field == nil
       assert column.label == "Actions"
@@ -334,7 +272,7 @@ defmodule Cinder.ActionColumnTest do
         sort: nil
       }
 
-      [column] = Table.process_columns([action_column], TestUser)
+      [column] = Collection.process_columns([action_column], TestUser)
 
       assert column.field == nil
       assert column.label == "Actions"

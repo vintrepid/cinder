@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filters.DateRange do
   @moduledoc """
   Date range filter implementation for Cinder tables.
@@ -11,6 +15,8 @@ defmodule Cinder.Filters.DateRange do
 
   import Cinder.Filter, only: [field_name: 2, filter_id: 3]
   use Cinder.Messages
+
+  alias Cinder.Filter.Helpers
 
   @impl true
   def render(column, current_value, theme, assigns) do
@@ -69,57 +75,35 @@ defmodule Cinder.Filters.DateRange do
   end
 
   @impl true
-  def process(raw_value, _column) when is_binary(raw_value) do
-    # Handle comma-separated values from form processing
+  def process(raw_value, column) when is_binary(raw_value) do
+    # Comma-separated from URLs: "from,to", or a single "from"
     case String.split(raw_value, ",", parts: 2) do
-      [from, to] ->
-        from_trimmed = String.trim(from)
-        to_trimmed = String.trim(to)
-
-        if from_trimmed == "" and to_trimmed == "" do
-          nil
-        else
-          %{
-            type: :date_range,
-            value: %{from: from_trimmed, to: to_trimmed},
-            operator: :between
-          }
-        end
-
-      [single] ->
-        trimmed = String.trim(single)
-
-        if trimmed == "" do
-          nil
-        else
-          %{
-            type: :date_range,
-            value: %{from: trimmed, to: ""},
-            operator: :between
-          }
-        end
-
-      _ ->
-        nil
+      [from, to] -> process(%{from: from, to: to}, column)
+      [from] -> process(%{from: from, to: ""}, column)
     end
   end
 
+  # A bound that isn't a date or datetime (from a hand-edited URL, say) is dropped,
+  # leaving the range open on that side, rather than reaching the data layer
   def process(%{from: from, to: to}, _column) do
-    from_trimmed = String.trim(from || "")
-    to_trimmed = String.trim(to || "")
+    from = usable_bound(from)
+    to = usable_bound(to)
 
-    if from_trimmed == "" and to_trimmed == "" do
+    if from == "" and to == "" do
       nil
     else
-      %{
-        type: :date_range,
-        value: %{from: from_trimmed, to: to_trimmed},
-        operator: :between
-      }
+      %{type: :date_range, value: %{from: from, to: to}, operator: :between}
     end
   end
 
   def process(_raw_value, _column), do: nil
+
+  defp usable_bound(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if valid_date_or_datetime?(trimmed), do: trimmed, else: ""
+  end
+
+  defp usable_bound(_value), do: ""
 
   @impl true
   def validate(value) do
@@ -135,7 +119,6 @@ defmodule Cinder.Filters.DateRange do
   @impl true
   def default_options do
     [
-      format: :date,
       include_time: false
     ]
   end
@@ -168,6 +151,8 @@ defmodule Cinder.Filters.DateRange do
   defp valid_date_or_datetime?(nil), do: true
 
   defp valid_date_or_datetime?(value) when is_binary(value) do
+    value = if Regex.match?(~r/T\d{2}:\d{2}$/, value), do: value <> ":00", else: value
+
     # Try datetime first (ISO8601 with T)
     if String.contains?(value, "T") do
       case DateTime.from_iso8601(value) do
@@ -227,127 +212,19 @@ defmodule Cinder.Filters.DateRange do
 
   defp format_value_for_input(value, _), do: value
 
-  # Get the resource from the query to detect field types
-  defp get_resource(query) do
-    case query do
-      %Ash.Query{resource: resource} -> resource
-      _ -> nil
-    end
-  end
-
-  # Get field type from resource
-  defp get_field_type(resource, field) when is_atom(resource) and is_atom(field) do
-    case Ash.Resource.Info.attribute(resource, field) do
-      %{type: Ash.Type.Date} -> :date
-      %{type: Ash.Type.NaiveDatetime} -> :naive_datetime
-      %{type: Ash.Type.UtcDatetime} -> :utc_datetime
-      %{type: Ash.Type.UtcDatetimeUsec} -> :utc_datetime
-      %{type: Ash.Type.DateTime} -> :utc_datetime
-      _ -> :unknown
-    end
-  end
-
-  defp get_field_type(_, _), do: :unknown
-
-  # Convert date string to datetime string for datetime fields
-  defp convert_date_for_field(value, _field_type) when value in ["", nil], do: value
-
-  defp convert_date_for_field(value, field_type)
-       when field_type in [:naive_datetime, :utc_datetime] and is_binary(value) do
-    cond do
-      # Already a datetime string
-      String.contains?(value, "T") ->
-        value
-
-      # Date string - convert to datetime
-      String.match?(value, ~r/^\d{4}-\d{2}-\d{2}$/) ->
-        "#{value}T00:00:00"
-
-      # Unknown format
-      true ->
-        value
-    end
-  end
-
-  defp convert_date_for_field(value, _field_type), do: value
-
-  # Convert date string to end-of-day datetime for range end values
-  defp convert_date_for_field_end(value, _field_type) when value in ["", nil], do: value
-
-  defp convert_date_for_field_end(value, field_type)
-       when field_type in [:naive_datetime, :utc_datetime] and is_binary(value) do
-    cond do
-      # Already a datetime string
-      String.contains?(value, "T") ->
-        value
-
-      # Date string - convert to end of day datetime
-      String.match?(value, ~r/^\d{4}-\d{2}-\d{2}$/) ->
-        "#{value}T23:59:59"
-
-      # Unknown format
-      true ->
-        value
-    end
-  end
-
-  defp convert_date_for_field_end(value, _field_type), do: value
-
   @impl true
-  def build_query(query, field, filter_value) do
-    %{value: %{from: from, to: to}} = filter_value
+  def build_query(query, field, %{value: %{from: from, to: to}}) do
+    Helpers.build_range_filter(query, field, bound(from), bound(to))
+  end
 
-    # Get resource and field type for proper conversion
-    resource = get_resource(query)
+  # A date-only bound covers that whole day; a bound with a time (from `include_time`) is
+  # compared as given
+  defp bound(value) when value in ["", nil], do: nil
 
-    # For embedded fields, we need to handle field type detection differently
-    field_type =
-      case Cinder.Filter.Helpers.parse_field_notation(field) do
-        {:direct, field_name} ->
-          field_atom = String.to_existing_atom(field_name)
-          get_field_type(resource, field_atom)
-
-        {:relationship, _rel_path, field_name} ->
-          field_atom = String.to_existing_atom(field_name)
-          get_field_type(resource, field_atom)
-
-        {:embedded, _embed_field, _field_name} ->
-          # For embedded fields, assume :naive_datetime for now
-          # This could be enhanced with embedded field type detection
-          :naive_datetime
-
-        {:nested_embedded, _embed_field, _field_path} ->
-          :naive_datetime
-
-        {:relationship_embedded, _rel_path, _embed_field, _field_name} ->
-          :naive_datetime
-
-        {:relationship_nested_embedded, _rel_path, _embed_field, _field_path} ->
-          :naive_datetime
-
-        {:invalid, _} ->
-          :date
-      end
-
-    # Convert values based on field type
-    from_converted = convert_date_for_field(from, field_type)
-    to_converted = convert_date_for_field_end(to, field_type)
-
-    case {from_converted, to_converted} do
-      {from_val, to_val} when from_val != "" and to_val != "" ->
-        # Apply both from and to filters using the centralized helper
-        query
-        |> Cinder.Filter.Helpers.build_ash_filter(field, from_val, :greater_than_or_equal)
-        |> Cinder.Filter.Helpers.build_ash_filter(field, to_val, :less_than_or_equal)
-
-      {from_val, ""} when from_val != "" ->
-        Cinder.Filter.Helpers.build_ash_filter(query, field, from_val, :greater_than_or_equal)
-
-      {"", to_val} when to_val != "" ->
-        Cinder.Filter.Helpers.build_ash_filter(query, field, to_val, :less_than_or_equal)
-
-      _ ->
-        query
+  defp bound(value) do
+    case Date.from_iso8601(value) do
+      {:ok, date} -> date
+      {:error, _} -> value
     end
   end
 end

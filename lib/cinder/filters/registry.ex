@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filters.Registry do
   @moduledoc """
   Registry for managing available filter types in Cinder.
@@ -5,6 +9,8 @@ defmodule Cinder.Filters.Registry do
   Provides centralized registration and discovery of filter implementations,
   along with default filter type inference based on data types.
   """
+
+  require Logger
 
   @doc """
   Returns a map of all registered filter types to their implementing modules.
@@ -35,11 +41,13 @@ defmodule Cinder.Filters.Registry do
       iex> Cinder.Filters.Registry.get_filter(:text)
       Cinder.Filters.Text
 
-      iex> Cinder.Filters.Registry.get_filter(:slider)
-      MyApp.Filters.Slider
-
       iex> Cinder.Filters.Registry.get_filter(:unknown)
       nil
+
+  With `config :cinder, filters: [slider: MyApp.Filters.Slider]`:
+
+      Cinder.Filters.Registry.get_filter(:slider)
+      #=> MyApp.Filters.Slider
   """
   def get_filter(filter_type) do
     Map.get(all_filters_with_custom(), filter_type)
@@ -55,11 +63,13 @@ defmodule Cinder.Filters.Registry do
       iex> Cinder.Filters.Registry.registered?(:text)
       true
 
-      iex> Cinder.Filters.Registry.registered?(:slider)
-      true
-
       iex> Cinder.Filters.Registry.registered?(:unknown)
       false
+
+  With `config :cinder, filters: [slider: MyApp.Filters.Slider]`:
+
+      Cinder.Filters.Registry.registered?(:slider)
+      #=> true
   """
   def registered?(filter_type) do
     Map.has_key?(all_filters_with_custom(), filter_type)
@@ -93,9 +103,7 @@ defmodule Cinder.Filters.Registry do
   def infer_filter_type(nil, _column_key), do: :text
 
   def infer_filter_type(%{type: type, constraints: constraints}, _column_key) do
-    # Only check constraints for enum types
-    if (is_map(constraints) and Map.has_key?(constraints, :one_of)) or
-         (is_atom(type) and enum_type?(type)) do
+    if Keyword.has_key?(constraints, :one_of) or (is_atom(type) and enum_type?(type)) do
       :select
     else
       infer_by_type(type)
@@ -174,18 +182,12 @@ defmodule Cinder.Filters.Registry do
   end
 
   @doc false
-  # Internal function for manual filter registration.
-  #
-  # For new applications, use configuration-based registration instead:
-  #
-  #     config :cinder, :filters, %{
-  #       slider: MyApp.Filters.Slider
-  #     }
-  #
-  # Then call Cinder.setup() in your application startup.
-  #
-  # This function is kept for internal use and testing scenarios.
-  def register_filter(filter_type, module) when is_atom(filter_type) and is_atom(module) do
+  @deprecated "Custom filters are read from `config :cinder, :filters`, no registration needed"
+  def register_filter(filter_type, module), do: register_config_filter(filter_type, module)
+
+  # Checks a configured filter: there's nothing to store, as filters are read from config
+  @doc false
+  def register_config_filter(filter_type, module) when is_atom(filter_type) and is_atom(module) do
     cond do
       # Prevent overriding built-in filter types
       Map.has_key?(all_filters(), filter_type) ->
@@ -200,25 +202,7 @@ defmodule Cinder.Filters.Registry do
         {:error, "Module #{inspect(module)} does not implement Cinder.Filter behavior"}
 
       true ->
-        # Just validate - no storage needed for config-only approach
         :ok
-    end
-  end
-
-  # Internal function used by register_config_filters/0 to avoid
-  # overriding runtime-registered filters.
-  def register_config_filter(filter_type, module) when is_atom(filter_type) and is_atom(module) do
-    register_filter(filter_type, module)
-  end
-
-  @doc false
-  # Internal function for unregistering custom filters.
-  # Mainly used for testing scenarios.
-  def unregister_filter(filter_type) when is_atom(filter_type) do
-    if builtin_filter?(filter_type) do
-      {:error, "Cannot unregister built-in filter :#{filter_type}"}
-    else
-      :ok
     end
   end
 
@@ -230,8 +214,10 @@ defmodule Cinder.Filters.Registry do
 
   ## Examples
 
-      iex> Cinder.Filters.Registry.list_custom_filters()
-      %{slider: MyApp.Filters.Slider, color_picker: MyApp.Filters.ColorPicker}
+  With `config :cinder, filters: [slider: MyApp.Filters.Slider, color_picker: MyApp.Filters.ColorPicker]`:
+
+      Cinder.Filters.Registry.list_custom_filters()
+      #=> %{slider: MyApp.Filters.Slider, color_picker: MyApp.Filters.ColorPicker}
   """
   def list_custom_filters do
     get_config_filters()
@@ -248,11 +234,13 @@ defmodule Cinder.Filters.Registry do
 
   ## Examples
 
-      iex> Cinder.Filters.Registry.custom_filter?(:slider)
-      true
-
       iex> Cinder.Filters.Registry.custom_filter?(:text)
       false
+
+  With `config :cinder, filters: [slider: MyApp.Filters.Slider]`:
+
+      Cinder.Filters.Registry.custom_filter?(:slider)
+      #=> true
   """
   def custom_filter?(filter_type) do
     Map.has_key?(list_custom_filters(), filter_type)
@@ -261,26 +249,43 @@ defmodule Cinder.Filters.Registry do
   @doc """
   Gets all filters including custom registered ones.
 
-  Custom filters take precedence over built-in filters if there's a naming conflict
-  (though registration prevents this from happening).
+  A custom filter configured under a built-in filter's name takes its place, with a warning
+  the first time.
 
   ## Returns
   Map of all filter types to their implementing modules
 
   ## Examples
 
-      iex> Cinder.Filters.Registry.all_filters_with_custom()
-      %{
-        text: Cinder.Filters.Text,
-        select: Cinder.Filters.Select,
-        slider: MyApp.Filters.Slider
-      }
+  With `config :cinder, filters: [slider: MyApp.Filters.Slider]`:
+
+      Cinder.Filters.Registry.all_filters_with_custom()
+      #=> %{text: Cinder.Filters.Text, select: Cinder.Filters.Select, ..., slider: MyApp.Filters.Slider}
   """
   def all_filters_with_custom do
     config_filters = get_config_filters()
+    built_ins = all_filters()
 
-    all_filters()
-    |> Map.merge(config_filters)
+    for {type, module} <- config_filters, Map.has_key?(built_ins, type) do
+      warn_built_in_clash(type, module)
+    end
+
+    Map.merge(built_ins, config_filters)
+  end
+
+  # The custom filter still wins, as it did when this warning came from `Cinder.setup/0`.
+  # Once per filter, as this runs on every filter lookup
+  defp warn_built_in_clash(type, module) do
+    key = {__MODULE__, :built_in_clash, type, module}
+
+    unless :persistent_term.get(key, false) do
+      :persistent_term.put(key, true)
+
+      Logger.warning(
+        "Cannot override built-in filter type :#{type}: #{inspect(module)} is used instead of " <>
+          "the built-in. Rename it in `config :cinder, :filters` to use both."
+      )
+    end
   end
 
   @doc """
@@ -297,8 +302,10 @@ defmodule Cinder.Filters.Registry do
       iex> Cinder.Filters.Registry.validate_custom_filters()
       :ok
 
-      iex> Cinder.Filters.Registry.validate_custom_filters()
-      {:error, ["Module MyApp.Filters.BrokenSlider does not implement required function render/4"]}
+  With a custom filter that's missing a callback:
+
+      Cinder.Filters.Registry.validate_custom_filters()
+      #=> {:error, ["Custom filter :slider - Module MyApp.Filters.BrokenSlider is missing callbacks: render/4"]}
   """
   def validate_custom_filters do
     custom_filters = list_custom_filters()
@@ -335,17 +342,13 @@ defmodule Cinder.Filters.Registry do
   end
 
   @doc """
-  Registers custom filters from application configuration.
-
-  This function should be called during application startup to register
-  filters defined in config files.
+  Checks the custom filters in application configuration.
 
   ## Configuration
 
-      config :cinder, :filters, %{
+      config :cinder, :filters,
         slider: MyApp.Filters.Slider,
         color_picker: MyApp.Filters.ColorPicker
-      }
 
   ## Returns
   :ok if all filters registered successfully, {:error, [reasons]} if any failed
@@ -436,9 +439,5 @@ defmodule Cinder.Filters.Registry do
     required_callbacks
     |> Enum.reject(fn {func, arity} -> function_exported?(module, func, arity) end)
     |> Enum.map(fn {func, arity} -> "#{func}/#{arity}" end)
-  end
-
-  defp builtin_filter?(filter_type) do
-    Map.has_key?(all_filters(), filter_type)
   end
 end

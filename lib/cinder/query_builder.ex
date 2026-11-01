@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.QueryBuilder do
   @moduledoc """
   Query building functionality for Cinder table components.
@@ -42,6 +46,7 @@ defmodule Cinder.QueryBuilder do
     try do
       base_query = Ash.Query.new(resource_or_query)
       resource = base_query.resource
+      sort_by = with_tiebreakers(sort_by, Keyword.get(options, :tiebreakers, %{}))
 
       case validate_sortable_fields(sort_by, resource) do
         :ok ->
@@ -84,6 +89,7 @@ defmodule Cinder.QueryBuilder do
     - `:actor` - The current user/actor
     - `:filters` - Filter map
     - `:sort_by` - Sort specifications
+    - `:tiebreakers` - Map of a sortable column's field to its `then` fields
     - `:page_size` - Number of records per page
     - `:current_page` - Current page number
     - `:columns` - Column definitions
@@ -157,6 +163,12 @@ defmodule Cinder.QueryBuilder do
   # `Ash.read` — Ash handles precedence between opts and what's already on
   # the query (per `Ash.Actions.Helpers.set_context_and_get_opts`).
   def execute(%Ash.Query{} = prepared_query, options) do
+    Cinder.Telemetry.span(:query, prepared_query, options, fn ->
+      execute_query(prepared_query, options)
+    end)
+  end
+
+  defp execute_query(prepared_query, options) do
     raw_page_size = Keyword.get(options, :page_size, 25)
     # Strip negative page sizes - use default instead
     page_size = if raw_page_size > 0, do: raw_page_size, else: 25
@@ -165,6 +177,7 @@ defmodule Cinder.QueryBuilder do
 
     # Keyset pagination options
     pagination_mode = Keyword.get(options, :pagination_mode, :offset)
+    count? = Keyword.get(options, :count_mode, true) == true
     after_keyset = Keyword.get(options, :after_keyset)
     before_keyset = Keyword.get(options, :before_keyset)
 
@@ -178,11 +191,12 @@ defmodule Cinder.QueryBuilder do
                 ash_opts,
                 page_size,
                 after_keyset,
-                before_keyset
+                before_keyset,
+                count?
               )
 
             :offset ->
-              execute_with_pagination(prepared_query, ash_opts, current_page, page_size)
+              execute_with_pagination(prepared_query, ash_opts, current_page, page_size, count?)
           end
 
         false ->
@@ -245,6 +259,12 @@ defmodule Cinder.QueryBuilder do
     end
   end
 
+  def count(%Ash.Query{} = prepared_query, options) do
+    Cinder.Telemetry.span(:count, prepared_query, options, fn ->
+      Ash.count(prepared_query, build_read_opts(options))
+    end)
+  end
+
   # Prepare the query for execution by ensuring it has an action set.
   #
   # If the caller supplied an already-prepared `Ash.Query` (`query.action != nil`),
@@ -299,12 +319,12 @@ defmodule Cinder.QueryBuilder do
   defp action_supports_pagination?(_), do: true
 
   # Execute query with offset pagination (existing behavior)
-  defp execute_with_pagination(query, ash_opts, current_page, page_size) do
+  defp execute_with_pagination(query, ash_opts, current_page, page_size, count?) do
     paginated_query =
       Ash.Query.page(query,
         limit: page_size,
         offset: (current_page - 1) * page_size,
-        count: true
+        count: count?
       )
 
     case Ash.read(paginated_query, ash_opts) do
@@ -319,10 +339,17 @@ defmodule Cinder.QueryBuilder do
   end
 
   # Execute query with keyset pagination (cursor-based)
-  defp execute_with_keyset_pagination(query, ash_opts, page_size, after_keyset, before_keyset) do
+  defp execute_with_keyset_pagination(
+         query,
+         ash_opts,
+         page_size,
+         after_keyset,
+         before_keyset,
+         count?
+       ) do
     # Build keyset pagination options
     keyset_opts =
-      [limit: page_size, count: true]
+      [limit: page_size, count: count?]
       |> maybe_add_keyset_cursor(:after, after_keyset)
       |> maybe_add_keyset_cursor(:before, before_keyset)
 
@@ -392,6 +419,45 @@ defmodule Cinder.QueryBuilder do
   defp extract_resource_for_logging(%Ash.Query{resource: resource}), do: resource
   defp extract_resource_for_logging(resource) when is_atom(resource), do: resource
   defp extract_resource_for_logging(_), do: :unknown
+
+  @doc """
+  The loads that showing these column fields needs, for `Ash.Query.load/2`: their
+  calculations and aggregates, and the relationships in their paths. Attributes and
+  embedded fields need none.
+
+  Fields that can't be resolved on the resource, and calculations with required
+  arguments, are skipped: a slot showing them needs an explicit `load`.
+
+  For example, `["title", "artist.name", "artist.album_count"]` on an album resource
+  gives `[artist: [:album_count]]`.
+  """
+  def infer_loads(resource, fields) do
+    fields
+    |> Enum.flat_map(fn field ->
+      with {:ok, resolved} <- Cinder.Field.resolve(resource, field),
+           load when not is_nil(load) <- Cinder.Field.load(resolved) do
+        [load]
+      else
+        _nothing_to_load -> []
+      end
+    end)
+    |> Enum.reduce([], &merge_load/2)
+  end
+
+  # Merges one field's load into the others, keeping first-seen order
+  defp merge_load({name, nested}, loads) do
+    case List.keyfind(loads, name, 0) do
+      {^name, existing} ->
+        List.keyreplace(loads, name, 0, {name, Enum.reduce(nested, existing, &merge_load/2)})
+
+      nil ->
+        loads ++ [{name, nested}]
+    end
+  end
+
+  defp merge_load(name, loads) do
+    if name in loads, do: loads, else: loads ++ [name]
+  end
 
   @doc """
   Applies query options like load and select to an Ash query.
@@ -485,24 +551,10 @@ defmodule Cinder.QueryBuilder do
 
         query
 
+      # A filter that fails to build raises through to `build_query/2`, which fails the
+      # load: dropping it would show data the filter was there to exclude
       filter_module ->
-        try do
-          filter_module.build_query(query, key, filter_config)
-        rescue
-          error ->
-            require Logger
-
-            Logger.error(
-              "Cinder filter query build failed",
-              event: "cinder.filter.build_failed",
-              component: "query_builder",
-              operation: "apply_filter",
-              error_kind: error.__struct__,
-              reason_code: "exception"
-            )
-
-            query
-        end
+        filter_module.build_query(query, key, filter_config)
     end
   end
 
@@ -611,8 +663,13 @@ defmodule Cinder.QueryBuilder do
 
   # Builds individual filter conditions for searchable columns
   defp build_search_conditions(query, searchable_columns, search_term) do
+    # Existing filters stay on the outer query, not inside each search branch.
+    # A column whose filter can't be built then leaves `filter` nil and is
+    # skipped, rather than adding a branch that is just the existing filters.
+    search_query = query |> Ash.Query.new() |> Ash.Query.unset(:filter)
+
     Enum.reduce(searchable_columns, [], fn column, acc ->
-      build_column_search_conditions(query, column, search_term) ++ acc
+      build_column_search_conditions(search_query, column, search_term) ++ acc
     end)
   end
 
@@ -670,6 +727,23 @@ defmodule Cinder.QueryBuilder do
       expr(^acc or ^condition)
     end)
   end
+
+  # `tiebreakers` maps a column's field to its `then` fields. They go after all of the
+  # user's sorts, in their column's direction, so they only break the ties those leave.
+  # A field already sorted by keeps its place and direction.
+  defp with_tiebreakers(sort_by, tiebreakers) when is_list(sort_by) do
+    tiebreaker_sorts =
+      for {field, direction} <- sort_by,
+          tiebreaker <- Map.get(tiebreakers, field, []),
+          do: {tiebreaker, direction}
+
+    Enum.uniq_by(sort_by ++ tiebreaker_sorts, fn
+      {field, _direction} -> field
+      other -> other
+    end)
+  end
+
+  defp with_tiebreakers(sort_by, _tiebreakers), do: sort_by
 
   @doc """
   Applies sorting to an Ash query based on sort specifications.
@@ -729,9 +803,9 @@ defmodule Cinder.QueryBuilder do
   defp apply_embedded_sort(query, rel_path, embed_field, field_path, direction) do
     import Ash.Expr
 
-    rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
-    embed_atom = String.to_atom(embed_field)
-    field_atoms = Enum.map(field_path, &String.to_atom/1)
+    rel_path_atoms = Enum.map(rel_path, &Cinder.Filter.Helpers.declared_field_atom/1)
+    embed_atom = Cinder.Filter.Helpers.declared_field_atom(embed_field)
+    field_atoms = Enum.map(field_path, &Cinder.Filter.Helpers.declared_field_atom/1)
 
     sort_expr =
       case rel_path_atoms do
@@ -922,67 +996,48 @@ defmodule Cinder.QueryBuilder do
     |> Keyword.merge(Keyword.take(query_opts, [:timeout, :authorize?, :max_concurrency, :tracer]))
   end
 
-  @doc """
-  Determines if a calculation can be sorted at the database level.
+  # Deprecated: Cinder resolves fields with `Cinder.Field` now. Kept as wrappers over it
+  # until 1.0.
 
-  Checks if a calculation has an `expression/2` function that allows it to be
-  converted to a database expression for sorting.
+  @doc false
+  @deprecated "Internal to Cinder, and removed in 1.0"
+  def calculation_sortable?(calculation), do: Cinder.Field.expression?(calculation)
 
-  ## Parameters
-  - `calculation` - An Ash calculation struct
-
-  ## Returns
-  - `true` if the calculation can be sorted at the database level
-  - `false` if the calculation is computed in-memory and cannot be sorted
-
-  ## Examples
-
-      # Database-level calculation (using expr())
-      calculation_sortable?(%{calculation: {Ash.Resource.Calculation.Expression, _}})
-      # => true
-
-      # In-memory calculation without expression/2
-      calculation_sortable?(%{calculation: {MyCalcModule, _}})
-      # => false (if MyCalcModule doesn't implement expression/2)
-  """
-  def calculation_sortable?(%{calculation: {Ash.Resource.Calculation.Expression, _}}), do: true
-
-  def calculation_sortable?(%{calculation: {module, _opts}}) when is_atom(module) do
-    function_exported?(module, :expression, 2)
+  @doc false
+  @deprecated "Internal to Cinder, and removed in 1.0"
+  def get_calculation_info(resource, field_name) do
+    if ash_resource?(resource), do: Ash.Resource.Info.calculation(resource, field_name)
   end
 
-  def calculation_sortable?(_), do: false
-
-  @doc """
-  Retrieves calculation information for a given field from an Ash resource.
-
-  ## Parameters
-  - `resource` - Ash resource module
-  - `field_name` - Field name as atom or string
-
-  ## Returns
-  - Calculation struct if the field is a calculation
-  - `nil` if the field is not a calculation or doesn't exist
-
-  ## Examples
-
-      get_calculation_info(User, :full_name)
-      # => %{name: :full_name, calculation: {...}, ...} or nil
-  """
-  def get_calculation_info(resource, field_name) when is_atom(resource) do
-    try do
-      calculations = Ash.Resource.Info.calculations(resource)
-      field_atom = if is_binary(field_name), do: String.to_atom(field_name), else: field_name
-
-      Enum.find(calculations, &(&1.name == field_atom))
-    rescue
-      _ -> nil
+  @doc false
+  @deprecated "Internal to Cinder, and removed in 1.0"
+  def resolve_field_resource(resource, field) when is_binary(field) do
+    case Cinder.Field.resolve(resource, field) do
+      {:ok, resolved} -> {resolved.resource, field |> String.split(".") |> List.last()}
+      :error -> {resource, field}
     end
   end
 
-  def get_calculation_info(_resource, _field_name) do
-    # Not an Ash resource, no calculations
-    nil
+  def resolve_field_resource(resource, field), do: {resource, to_string(field)}
+
+  @doc false
+  @deprecated "Internal to Cinder, and removed in 1.0"
+  def validate_field_existence(resource, field) do
+    not ash_resource?(resource) or Cinder.Field.resolve(resource, to_string(field)) != :error
+  end
+
+  @doc false
+  @deprecated "Internal to Cinder, and removed in 1.0"
+  def field_exists_on_resource?(resource, field) do
+    case ash_resource?(resource) && Cinder.Field.resolve(resource, to_string(field)) do
+      false -> true
+      {:ok, %{relationships: [], kind: kind}} -> kind != :embedded
+      _ -> false
+    end
+  end
+
+  defp ash_resource?(resource) do
+    is_atom(resource) and resource != nil and Ash.Resource.Info.resource?(resource)
   end
 
   @doc """
@@ -1009,15 +1064,16 @@ defmodule Cinder.QueryBuilder do
   """
   def validate_sortable_fields(sort_by, resource) when is_atom(resource) do
     try do
-      resource_info = build_resource_info(resource)
+      unless Ash.Resource.Info.resource?(resource) do
+        raise ArgumentError, "#{inspect(resource)} is not an Ash resource"
+      end
 
-      {unsortable_fields, details} =
-        sort_by
-        |> Enum.reduce({[], []}, fn {field, _direction}, acc ->
-          validate_single_sort_field(field, resource, resource_info, acc)
-        end)
+      problems =
+        for {field, _direction} <- sort_by,
+            problem = sort_problem(resource, to_string(field)),
+            do: {field, "#{field} (#{problem})"}
 
-      build_validation_result(unsortable_fields, details)
+      build_validation_result(Enum.map(problems, &elem(&1, 0)), Enum.map(problems, &elem(&1, 1)))
     rescue
       error ->
         require Logger
@@ -1032,371 +1088,15 @@ defmodule Cinder.QueryBuilder do
           reason_code: "exception"
         )
 
-        :ok
+        {:error, "Failed to validate sort fields"}
     end
   end
 
-  # Builds a map of resource information needed for field validation.
-  # Extracts calculations, attributes, and relationships for efficient lookup.
-  defp build_resource_info(resource) do
-    calculations = Ash.Resource.Info.calculations(resource)
-    calculation_map = Map.new(calculations, &{&1.name, &1})
-
-    # Get all valid field names for existence validation
-    attributes = Ash.Resource.Info.attributes(resource) |> Enum.map(& &1.name)
-    relationships = Ash.Resource.Info.relationships(resource) |> Enum.map(& &1.name)
-    aggregates = Ash.Resource.Info.aggregates(resource) |> Enum.map(& &1.name)
-
-    valid_fields =
-      MapSet.new(attributes ++ relationships ++ aggregates ++ Map.keys(calculation_map))
-
-    %{
-      calculation_map: calculation_map,
-      valid_fields: valid_fields
-    }
-  end
-
-  # Validates a single sort field against resource information.
-  # Returns updated {unsortable_fields, details} tuple.
-  defp validate_single_sort_field(field, resource, _resource_info, {unsortable, details}) do
-    field_string = to_string(field)
-
-    # Use comprehensive field validation that handles embedded fields
-    if validate_field_existence(resource, field_string) do
-      # Parse field to handle relationship calculations for sortability check
-      {target_resource, target_field} = resolve_field_resource(resource, field_string)
-
-      target_field_atom = String.to_atom(target_field)
-
-      # Check if it's a calculation that needs validation
-      case get_calculation_info(target_resource, target_field_atom) do
-        nil ->
-          # Regular field that exists - should be sortable
-          {unsortable, details}
-
-        calc ->
-          # It's a calculation - check if sortable
-          validate_calculation_sortability(field, calc, {unsortable, details})
-      end
-    else
-      detail = "#{field} (field does not exist on #{inspect(resource)})"
-      {[field | unsortable], [detail | details]}
-    end
-  end
-
-  # Validates whether a calculation can be sorted at the database level.
-  # Checks if the calculation implements expression/2 for database-level sorting.
-  defp validate_calculation_sortability(field, calc, {unsortable, details}) do
-    if calculation_sortable?(calc) do
-      {unsortable, details}
-    else
-      detail =
-        case calc.calculation do
-          {module, _} ->
-            "#{field} (#{inspect(module)} - missing expression/2)"
-
-          other ->
-            "#{field} (#{inspect(other)})"
-        end
-
-      {[field | unsortable], [detail | details]}
-    end
-  end
-
-  @doc """
-  Resolves a field to its target resource and field name.
-  Handles relationship traversal (e.g., "user.profile.first_name" -> {Profile, "first_name"})
-  """
-  def resolve_field_resource(resource, field) when is_binary(field) do
-    case String.split(field, ".", parts: 2) do
-      [single_field] ->
-        # Direct field on the main resource
-        {resource, single_field}
-
-      [relationship_name, remaining_field] ->
-        # Relationship field - try to resolve the target resource
-        try do
-          if is_atom(resource) and Ash.Resource.Info.resource?(resource) do
-            case Ash.Resource.Info.relationship(resource, String.to_atom(relationship_name)) do
-              %{destination: destination_resource} ->
-                # Recursively resolve the remaining field path
-                resolve_field_resource(destination_resource, remaining_field)
-
-              nil ->
-                # Relationship not found, treat as direct field
-                {resource, field}
-            end
-          else
-            # Not an Ash resource, can't resolve relationships
-            {resource, field}
-          end
-        rescue
-          _ ->
-            # Error resolving relationship, fall back to direct field
-            {resource, field}
-        end
-    end
-  end
-
-  def resolve_field_resource(resource, field), do: {resource, to_string(field)}
-
-  @doc """
-  Validates field existence on a resource, handling all field types including embedded fields.
-
-  Supports:
-  - Direct fields: "name"
-  - Relationship fields: "user.profile.name"
-  - Embedded fields: "profile__first_name"
-  - Mixed fields: "user.profile__address__street"
-  """
-  def validate_field_existence(resource, field) when is_binary(field) do
-    case Cinder.Filter.Helpers.parse_field_notation(field) do
-      {:direct, field_name} ->
-        field_exists_on_resource?(resource, field_name)
-
-      {:relationship, rel_path, target_field} ->
-        # Resolve through relationship chain
-        case resolve_relationship_resource(resource, rel_path) do
-          {:ok, target_resource} ->
-            field_exists_on_resource?(target_resource, target_field)
-
-          {:error, _} ->
-            false
-        end
-
-      {:embedded, embed_field, nested_field} ->
-        # Validate embedded field
-        validate_embedded_field(resource, embed_field, nested_field)
-
-      {:nested_embedded, embed_field, nested_path} ->
-        # Validate nested embedded field
-        validate_nested_embedded_field(resource, embed_field, nested_path)
-
-      {:relationship_embedded, rel_path, embed_field, nested_field} ->
-        # Resolve relationship then validate embedded field
-        validate_relationship_embedded_field(resource, rel_path, embed_field, nested_field)
-
-      {:relationship_nested_embedded, rel_path, embed_field, nested_path} ->
-        # Resolve relationship then validate nested embedded field
-        validate_relationship_nested_embedded_field(resource, rel_path, embed_field, nested_path)
-
-      {:invalid, _} ->
-        false
-    end
-  rescue
-    _ ->
-      # If parsing or validation fails, assume field doesn't exist
-      false
-  end
-
-  def validate_field_existence(resource, field), do: field_exists_on_resource?(resource, field)
-
-  # Resolves a relationship path to get the target resource
-  defp resolve_relationship_resource(resource, rel_path) do
-    try do
-      if is_atom(resource) and Ash.Resource.Info.resource?(resource) do
-        Enum.reduce_while(rel_path, {:ok, resource}, fn rel_name, {:ok, current_resource} ->
-          case Ash.Resource.Info.relationship(current_resource, String.to_atom(rel_name)) do
-            %{destination: destination_resource} ->
-              {:cont, {:ok, destination_resource}}
-
-            nil ->
-              {:halt,
-               {:error, "Relationship #{rel_name} not found on #{inspect(current_resource)}"}}
-          end
-        end)
-      else
-        {:error, "Not an Ash resource"}
-      end
-    rescue
-      error ->
-        {:error, "Error resolving relationship: #{inspect(error)}"}
-    end
-  end
-
-  # Validates an embedded field exists on the resource
-  defp validate_embedded_field(resource, embed_field, nested_field) do
-    try do
-      if is_atom(resource) and Ash.Resource.Info.resource?(resource) do
-        embed_field_atom = String.to_atom(embed_field)
-
-        # Check if embed_field is an embedded attribute
-        case Ash.Resource.Info.attribute(resource, embed_field_atom) do
-          %{type: :map} ->
-            # Map type - assume nested field is valid (can't validate structure)
-            true
-
-          %{type: {:array, :map}} ->
-            # Array of maps - assume nested field is valid
-            true
-
-          %{type: {:array, embedded_type}} when is_atom(embedded_type) ->
-            # Array of embedded resources - check if nested field exists on embedded type
-            validate_embedded_resource_field(embedded_type, nested_field)
-
-          %{type: embedded_type} when is_atom(embedded_type) ->
-            # Single embedded resource - check if nested field exists on embedded type
-            validate_embedded_resource_field(embedded_type, nested_field)
-
-          nil ->
-            # Embed field doesn't exist
-            false
-        end
-      else
-        # Not an Ash resource, assume field exists
-        true
-      end
-    rescue
-      _ ->
-        false
-    end
-  end
-
-  # Validates a nested embedded field path
-  defp validate_nested_embedded_field(resource, embed_field, nested_path) do
-    try do
-      if is_atom(resource) and Ash.Resource.Info.resource?(resource) do
-        embed_field_atom = String.to_atom(embed_field)
-
-        case Ash.Resource.Info.attribute(resource, embed_field_atom) do
-          %{type: :map} ->
-            # Map type - assume nested path is valid (can't validate structure)
-            true
-
-          %{type: {:array, :map}} ->
-            # Array of maps - assume nested path is valid
-            true
-
-          %{type: {:array, embedded_type}} when is_atom(embedded_type) ->
-            # Array of embedded resources - validate nested path on embedded type
-            validate_nested_path_on_embedded_resource(embedded_type, nested_path)
-
-          %{type: embedded_type} when is_atom(embedded_type) ->
-            # Single embedded resource - validate nested path on embedded type
-            validate_nested_path_on_embedded_resource(embedded_type, nested_path)
-
-          nil ->
-            # Embed field doesn't exist
-            false
-        end
-      else
-        true
-      end
-    rescue
-      _ ->
-        false
-    end
-  end
-
-  # Validates a nested path on an embedded resource type
-  defp validate_nested_path_on_embedded_resource(embedded_type, nested_path) do
-    case nested_path do
-      [single_field] ->
-        # Single nested field - check if it exists on embedded resource
-        validate_embedded_resource_field(embedded_type, single_field)
-
-      [next_embed_field | remaining_path] ->
-        # Multi-level nesting - recursively validate
-        try do
-          if is_atom(embedded_type) and Ash.Resource.Info.resource?(embedded_type) do
-            next_embed_atom = String.to_atom(next_embed_field)
-
-            case Ash.Resource.Info.attribute(embedded_type, next_embed_atom) do
-              %{type: :map} ->
-                # Map type - assume remaining path is valid
-                true
-
-              %{type: {:array, :map}} ->
-                # Array of maps - assume remaining path is valid
-                true
-
-              %{type: {:array, deeper_embedded_type}} when is_atom(deeper_embedded_type) ->
-                validate_nested_path_on_embedded_resource(deeper_embedded_type, remaining_path)
-
-              %{type: deeper_embedded_type} when is_atom(deeper_embedded_type) ->
-                validate_nested_path_on_embedded_resource(deeper_embedded_type, remaining_path)
-
-              nil ->
-                # Field doesn't exist on this embedded resource
-                false
-            end
-          else
-            # Not an Ash resource, assume valid
-            true
-          end
-        rescue
-          _ ->
-            false
-        end
-
-      _ ->
-        false
-    end
-  end
-
-  # Validates a relationship + embedded field combination
-  defp validate_relationship_embedded_field(resource, rel_path, embed_field, nested_field) do
-    case resolve_relationship_resource(resource, rel_path) do
-      {:ok, target_resource} ->
-        validate_embedded_field(target_resource, embed_field, nested_field)
-
-      {:error, _} ->
-        false
-    end
-  end
-
-  # Validates a relationship + nested embedded field combination
-  defp validate_relationship_nested_embedded_field(resource, rel_path, embed_field, nested_path) do
-    case resolve_relationship_resource(resource, rel_path) do
-      {:ok, target_resource} ->
-        validate_nested_embedded_field(target_resource, embed_field, nested_path)
-
-      {:error, _} ->
-        false
-    end
-  end
-
-  # Validates that a field exists on an embedded resource type
-  defp validate_embedded_resource_field(embedded_type, field_name) do
-    try do
-      if is_atom(embedded_type) and Ash.Resource.Info.resource?(embedded_type) do
-        field_exists_on_resource?(embedded_type, field_name)
-      else
-        # Not an Ash resource, assume field exists
-        true
-      end
-    rescue
-      _ ->
-        true
-    end
-  end
-
-  @doc """
-  Checks if a field exists on a resource (including attributes, relationships, calculations, aggregates)
-  """
-  def field_exists_on_resource?(resource, field) do
-    try do
-      if is_atom(resource) and Ash.Resource.Info.resource?(resource) do
-        field_atom = if is_binary(field), do: String.to_atom(field), else: field
-
-        # Get all valid field types
-        attributes = Ash.Resource.Info.attributes(resource) |> Enum.map(& &1.name)
-        relationships = Ash.Resource.Info.relationships(resource) |> Enum.map(& &1.name)
-        calculations = Ash.Resource.Info.calculations(resource) |> Enum.map(& &1.name)
-        aggregates = Ash.Resource.Info.aggregates(resource) |> Enum.map(& &1.name)
-
-        valid_fields = MapSet.new(attributes ++ relationships ++ calculations ++ aggregates)
-
-        # Check the target field on the resolved resource
-        MapSet.member?(valid_fields, field_atom)
-      else
-        # Not an Ash resource, assume field exists
-        true
-      end
-    rescue
-      _ ->
-        # Error checking resource, assume field exists
-        true
+  # Why a field can't be sorted by, or nil
+  defp sort_problem(resource, field) do
+    case Cinder.Field.resolve(resource, field) do
+      {:ok, resolved} -> Cinder.Field.query_error(resolved)
+      :error -> "field does not exist on #{inspect(resource)}"
     end
   end
 

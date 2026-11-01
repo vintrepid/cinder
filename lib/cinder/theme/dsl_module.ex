@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Theme.DslModule do
   @moduledoc """
   DSL module for creating custom Cinder themes.
@@ -90,7 +94,7 @@ defmodule Cinder.Theme.DslModule do
   """
   defmacro component(_component, do: block) do
     IO.warn(
-      "component/2 is deprecated in Cinder themes and will be removed in a future version. " <>
+      "component/2 is deprecated in Cinder themes and will be removed in 1.0. " <>
         "Run `mix cinder.upgrade` to update your theme files.",
       Macro.Env.stacktrace(__CALLER__)
     )
@@ -210,7 +214,7 @@ defmodule Cinder.Theme.DslModule do
       invalid_properties =
         theme
         |> Map.keys()
-        |> Enum.reject(&Cinder.Theme.valid_property?/1)
+        |> Enum.reject(&(&1 in Cinder.Theme.properties()))
         |> Enum.sort()
 
       case invalid_properties do

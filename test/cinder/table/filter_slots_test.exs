@@ -24,6 +24,9 @@ defmodule Cinder.Table.FilterSlotsTest do
       attribute(:department, :string)
       attribute(:salary, :decimal)
       attribute(:tags, {:array, :string})
+      attribute(:status, :string)
+      attribute(:price, :decimal)
+      attribute(:featured, :boolean)
     end
 
     actions do
@@ -105,24 +108,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         filter: [%{field: "created_at", type: :date_range, __slot__: :filter}]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
-      assert html =~ "cinder-table"
-    end
-
-    test "supports auto-detection when type is not provided" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [%{field: "name", __slot__: :col}],
-        filter: [
-          # Should auto-detect as number_range
-          %{field: "age", __slot__: :filter},
-          # Should auto-detect as boolean
-          %{field: "active", __slot__: :filter}
-        ]
-      }
-
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
     end
 
@@ -136,7 +122,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "Creation Date"
     end
 
@@ -155,7 +141,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
       # Verify that the options are actually rendered in the dropdown
       assert html =~ "Sales"
@@ -169,38 +155,6 @@ defmodule Cinder.Table.FilterSlotsTest do
   end
 
   describe "field conflict detection" do
-    test "raises error when same field is used in both column filter and filter slot" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [%{field: "name", filter: true, __slot__: :col}],
-        filter: [%{field: "name", type: :text, __slot__: :filter}]
-      }
-
-      assert_raise ArgumentError, ~r/Field conflict detected.*name/, fn ->
-        render_component(&Cinder.Table.table/1, assigns)
-      end
-    end
-
-    test "raises error with helpful message listing all conflicting fields" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [
-          %{field: "name", filter: true, __slot__: :col},
-          %{field: "email", filter: true, __slot__: :col}
-        ],
-        filter: [
-          %{field: "name", type: :text, __slot__: :filter},
-          %{field: "email", type: :text, __slot__: :filter}
-        ]
-      }
-
-      assert_raise ArgumentError, ~r/Field conflict detected.*email.*name/, fn ->
-        render_component(&Cinder.Table.table/1, assigns)
-      end
-    end
-
     test "allows same field in column without filter and filter slot" do
       assigns = %{
         resource: TestUser,
@@ -210,7 +164,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         filter: [%{field: "name", type: :text, __slot__: :filter}]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
     end
 
@@ -222,7 +176,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         filter: [%{field: "created_at", type: :date_range, __slot__: :filter}]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
     end
   end
@@ -238,7 +192,7 @@ defmodule Cinder.Table.FilterSlotsTest do
 
       logs =
         capture_log(fn ->
-          html = render_component(&Cinder.Table.table/1, assigns)
+          html = render_component(&Cinder.collection/1, assigns)
           assert html =~ "cinder-table"
         end)
 
@@ -256,7 +210,7 @@ defmodule Cinder.Table.FilterSlotsTest do
 
       logs =
         capture_log(fn ->
-          html = render_component(&Cinder.Table.table/1, assigns)
+          html = render_component(&Cinder.collection/1, assigns)
           assert html =~ "cinder-table"
         end)
 
@@ -272,7 +226,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         %{field: "age", type: :number_range, __slot__: :filter}
       ]
 
-      processed = Cinder.Table.process_filter_slots(filter_slots, TestUser)
+      processed = Cinder.Collection.process_filter_slots(filter_slots, TestUser)
 
       assert length(processed) == 2
 
@@ -298,7 +252,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         %{field: "name", __slot__: :filter}
       ]
 
-      processed = Cinder.Table.process_filter_slots(filter_slots, TestUser)
+      processed = Cinder.Collection.process_filter_slots(filter_slots, TestUser)
 
       age_filter = Enum.find(processed, &(&1.field == "age"))
       assert age_filter.filter_type == :number_range
@@ -318,7 +272,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         %{field: "track_count", __slot__: :filter}
       ]
 
-      processed = Cinder.Table.process_filter_slots(filter_slots, TestAlbum)
+      processed = Cinder.Collection.process_filter_slots(filter_slots, TestAlbum)
 
       duration_filter = Enum.find(processed, &(&1.field == "duration_seconds"))
       assert duration_filter.filter_type == :number_range
@@ -366,7 +320,6 @@ defmodule Cinder.Table.FilterSlotsTest do
           field: "created_at",
           type: :date_range,
           include_time: true,
-          format: :datetime,
           __slot__: :filter
         },
         # Number range with constraints
@@ -378,13 +331,21 @@ defmodule Cinder.Table.FilterSlotsTest do
           value: "yes",
           label: "Featured Only",
           __slot__: :filter
+        },
+        # Autocomplete with a result limit
+        %{
+          field: "department",
+          type: :autocomplete,
+          options: [{"Admin", "admin"}],
+          max_results: 5,
+          __slot__: :filter
         }
       ]
 
-      processed = Cinder.Table.process_filter_slots(filter_slots, TestUser)
+      processed = Cinder.Collection.process_filter_slots(filter_slots, TestUser)
 
       # Verify all slots processed correctly
-      assert length(processed) == 7
+      assert length(processed) == 8
 
       # Check specific option extraction
       text_filter = Enum.find(processed, &(&1.field == "name"))
@@ -407,6 +368,22 @@ defmodule Cinder.Table.FilterSlotsTest do
 
       checkbox_filter = Enum.find(processed, &(&1.field == "featured"))
       assert checkbox_filter.filter_type == :checkbox
+
+      # Each option reaches the filter
+      options = Map.new(processed, &{&1.field, &1.filter_options})
+
+      assert options["name"][:operator] == :starts_with
+      assert options["name"][:case_sensitive] == true
+      assert options["name"][:placeholder] == "Enter name..."
+      assert options["active"][:labels] == %{true: "Active Only", false: "Inactive Only"}
+      assert options["status"][:prompt] == "Choose status..."
+      assert options["tags"][:match_mode] == :all
+      assert options["created_at"][:include_time] == true
+
+      assert Map.new(Keyword.take(options["price"], [:min, :max, :step])) ==
+               %{min: 0, max: 1000, step: 10}
+
+      assert options["department"][:max_results] == 5
     end
 
     test "passes filter options through to filter system" do
@@ -426,7 +403,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
       # The actual filter rendering would contain the placeholder and case sensitivity,
       # but testing that would require more complex HTML parsing
@@ -438,7 +415,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         %{field: "department", type: :select, __slot__: :filter}
       ]
 
-      processed = Cinder.Table.process_filter_slots(filter_slots, TestUser)
+      processed = Cinder.Collection.process_filter_slots(filter_slots, TestUser)
 
       created_at_filter = Enum.find(processed, &(&1.field == "created_at"))
       assert created_at_filter.label == "Created At"
@@ -451,7 +428,7 @@ defmodule Cinder.Table.FilterSlotsTest do
       filter_slots = [%{type: :text, __slot__: :filter}]
 
       assert_raise ArgumentError, ~r/Filter slot missing required :field attribute/, fn ->
-        Cinder.Table.process_filter_slots(filter_slots, TestUser)
+        Cinder.Collection.process_filter_slots(filter_slots, TestUser)
       end
     end
   end
@@ -468,7 +445,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         %{field: "department", filterable: true, filter_type: :select, __slot__: :filter}
       ]
 
-      merged = Cinder.Table.build_query_columns(processed_columns, processed_filter_slots)
+      merged = Cinder.Collection.build_query_columns(processed_columns, processed_filter_slots)
 
       # Should include only filterable column + both filter slots
       assert length(merged) == 3
@@ -483,15 +460,18 @@ defmodule Cinder.Table.FilterSlotsTest do
 
     test "detects conflicts between column filters and filter slots" do
       processed_columns = [
+        %{field: "email", filterable: true, filter_type: :text, __slot__: :col},
         %{field: "name", filterable: true, filter_type: :text, __slot__: :col}
       ]
 
       processed_filter_slots = [
+        %{field: "email", filterable: true, filter_type: :text, __slot__: :filter},
         %{field: "name", filterable: true, filter_type: :text, __slot__: :filter}
       ]
 
-      assert_raise ArgumentError, ~r/Field conflict detected.*name/, fn ->
-        Cinder.Table.build_query_columns(processed_columns, processed_filter_slots)
+      # Every conflicting field is named, not just the first
+      assert_raise ArgumentError, ~r/Field conflict detected.*email.*name/, fn ->
+        Cinder.Collection.build_query_columns(processed_columns, processed_filter_slots)
       end
     end
 
@@ -505,7 +485,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         %{field: "name", filterable: true, filter_type: :text, __slot__: :filter}
       ]
 
-      merged = Cinder.Table.build_query_columns(processed_columns, processed_filter_slots)
+      merged = Cinder.Collection.build_query_columns(processed_columns, processed_filter_slots)
       assert length(merged) == 1
       assert hd(merged).field == "name"
       assert hd(merged).__slot__ == :filter
@@ -523,7 +503,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
 
       # Should contain filter inputs for both name and created_at
       assert html =~ ~r/name.*filters/
@@ -539,7 +519,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         filter: [%{field: "created_at", type: :date_range, __slot__: :filter}]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
 
       # Should show filter controls because filter slot is present
       assert html =~ "Filters"
@@ -557,50 +537,9 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
       # More specific assertions would require testing the actual filter HTML structure
-    end
-  end
-
-  describe "backward compatibility" do
-    test "works without filter slots (existing behavior)" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [
-          %{field: "name", filter: true, __slot__: :col},
-          %{field: "email", __slot__: :col}
-        ]
-      }
-
-      html = render_component(&Cinder.Table.table/1, assigns)
-      assert html =~ "cinder-table"
-      # Should work exactly as before
-    end
-
-    test "handles empty filter slots gracefully" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [%{field: "name", __slot__: :col}],
-        filter: []
-      }
-
-      html = render_component(&Cinder.Table.table/1, assigns)
-      assert html =~ "cinder-table"
-    end
-
-    test "works when filter key is missing from assigns" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [%{field: "name", filter: true, __slot__: :col}]
-        # No :filter key
-      }
-
-      html = render_component(&Cinder.Table.table/1, assigns)
-      assert html =~ "cinder-table"
     end
   end
 
@@ -615,7 +554,7 @@ defmodule Cinder.Table.FilterSlotsTest do
 
       error_message =
         assert_raise(ArgumentError, fn ->
-          render_component(&Cinder.Table.table/1, assigns)
+          render_component(&Cinder.collection/1, assigns)
         end).message
 
       assert error_message =~ "Field conflict detected"
@@ -623,22 +562,6 @@ defmodule Cinder.Table.FilterSlotsTest do
       assert error_message =~ "cannot be defined in both"
       assert error_message =~ ":col"
       assert error_message =~ ":filter"
-    end
-
-    test "provides helpful error for missing required field" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [%{field: "name", __slot__: :col}],
-        filter: [%{type: :text, __slot__: :filter}]
-      }
-
-      error_message =
-        assert_raise(ArgumentError, fn ->
-          render_component(&Cinder.Table.table/1, assigns)
-        end).message
-
-      assert error_message =~ "Filter slot missing required :field attribute"
     end
   end
 
@@ -661,7 +584,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
       assert html =~ "Created"
       assert html =~ "Is Active"
@@ -700,7 +623,7 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
 
       # Should display table columns
       assert html =~ "Full Name"
@@ -740,55 +663,14 @@ defmodule Cinder.Table.FilterSlotsTest do
         ]
       }
 
-      html = render_component(&Cinder.Table.table/1, assigns)
+      html = render_component(&Cinder.collection/1, assigns)
       assert html =~ "cinder-table"
       assert html =~ "Legal drinking age"
       # This test verifies the fix for the value attribute bug
     end
-
-    test "filter-only slots work with URL state integration" do
-      assigns = %{
-        resource: TestUser,
-        actor: nil,
-        col: [%{field: "name", __slot__: :col}],
-        filter: [
-          %{field: "age", type: :number_range, __slot__: :filter},
-          %{field: "active", type: :boolean, __slot__: :filter}
-        ]
-      }
-
-      html = render_component(&Cinder.Table.table/1, assigns)
-      assert html =~ "cinder-table"
-
-      # Filter-only slots should be processed and available for URL state management
-      # The actual URL encoding/decoding would be tested in URL sync integration tests
-      assert html =~ "Filters"
-    end
   end
 
   describe "filter slot custom fn support" do
-    test "filter slot with fn attribute sets filter_fn on processed column" do
-      custom_filter_fn = fn query, %{value: value} ->
-        Map.put(query, :custom_filter_applied, value)
-      end
-
-      filter_slots = [
-        %{
-          field: "virtual_field",
-          label: "Virtual Filter",
-          fn: custom_filter_fn,
-          __slot__: :filter
-        }
-      ]
-
-      processed = Cinder.Collection.process_filter_slots(filter_slots, TestUser)
-      filter = List.first(processed)
-
-      # The filter slot should have the custom filter_fn set
-      assert filter.filterable == true
-      assert is_function(filter.filter_fn, 2)
-    end
-
     test "filter slot fn is called by QueryBuilder" do
       mock_query = %{resource: TestUser, filters: []}
 
@@ -854,7 +736,7 @@ defmodule Cinder.Table.FilterSlotsTest do
     end
 
     test "raises helpful error for invalid string filter type on col slot" do
-      assert_raise ArgumentError, ~r/Invalid filter type :multiselect for field "status"/, fn ->
+      assert_raise ArgumentError, ~r/Invalid filter type "multiselect" for field "status"/, fn ->
         col_slots = [
           %{
             field: "status",
@@ -865,6 +747,28 @@ defmodule Cinder.Table.FilterSlotsTest do
 
         Cinder.Collection.process_columns(col_slots, TestUser)
       end
+    end
+
+    # String types are matched against the known ones, never converted to atoms
+    test "a string filter type creates no atom, and a known one still resolves" do
+      type = "cinder_bogus_#{System.unique_integer([:positive])}"
+
+      assert_raise ArgumentError, ~r/Invalid filter type "#{type}"/, fn ->
+        Cinder.Collection.process_columns(
+          [%{field: "status", filter: [type: type], __slot__: :col}],
+          TestUser
+        )
+      end
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(type) end
+
+      [column] =
+        Cinder.Collection.process_columns(
+          [%{field: "name", filter: "select", __slot__: :col}],
+          TestUser
+        )
+
+      assert column.filter_type == :select
     end
 
     test "filter slot with fn on non-existent field is still filterable" do

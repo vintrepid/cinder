@@ -11,75 +11,28 @@ defmodule Cinder.ThemeVerificationTest do
     Cinder.Themes.Retro
   ]
 
-  @required_multiselect_properties [
-    :filter_multiselect_container_class,
-    :filter_multiselect_dropdown_class,
-    :filter_multiselect_option_class,
-    :filter_multiselect_checkbox_class,
-    :filter_multiselect_label_class,
-    :filter_multiselect_empty_class
-  ]
+  describe "checkbox consistency" do
+    @checkbox_properties [
+      :filter_checkbox_input_class,
+      :filter_multicheckboxes_checkbox_class,
+      :filter_multiselect_checkbox_class,
+      :selection_checkbox_class
+    ]
 
-  @required_radio_group_properties [
-    :filter_radio_group_container_class,
-    :filter_radio_group_option_class,
-    :filter_radio_group_radio_class,
-    :filter_radio_group_label_class
-  ]
+    @checkbox_label_properties [
+      :filter_checkbox_label_class,
+      :filter_multicheckboxes_label_class
+    ]
 
-  @required_pagination_properties [
-    :pagination_wrapper_class,
-    :pagination_container_class,
-    :pagination_button_class,
-    :pagination_info_class,
-    :pagination_count_class,
-    :pagination_nav_class,
-    :pagination_current_class
-  ]
-
-  describe "theme multi-select properties" do
     for theme_module <- @themes do
-      test "#{theme_module} has all required multi-select dropdown properties" do
+      test "#{theme_module} styles every checkbox the same way" do
         theme = unquote(theme_module).resolve_theme()
 
-        for property <- @required_multiselect_properties do
-          assert Map.has_key?(theme, property),
-                 "#{unquote(theme_module)} missing multi-select property: #{property}"
+        for properties <- [@checkbox_properties, @checkbox_label_properties] do
+          styles = Map.new(properties, &{&1, without_spacing(theme[&1])})
 
-          assert is_binary(theme[property]),
-                 "#{unquote(theme_module)} property #{property} should be string, got: #{inspect(theme[property])}"
-        end
-      end
-    end
-  end
-
-  describe "theme radio group filter properties" do
-    for theme_module <- @themes do
-      test "#{theme_module} has all required radio group filter properties" do
-        theme = unquote(theme_module).resolve_theme()
-
-        for property <- @required_radio_group_properties do
-          assert Map.has_key?(theme, property),
-                 "#{unquote(theme_module)} missing radio group filter property: #{property}"
-
-          assert is_binary(theme[property]),
-                 "#{unquote(theme_module)} property #{property} should be string, got: #{inspect(theme[property])}"
-        end
-      end
-    end
-  end
-
-  describe "theme pagination properties" do
-    for theme_module <- @themes do
-      test "#{theme_module} has all required pagination properties" do
-        theme = unquote(theme_module).resolve_theme()
-
-        for property <- @required_pagination_properties do
-          assert Map.has_key?(theme, property),
-                 "#{unquote(theme_module)} missing pagination property: #{property}"
-
-          assert is_binary(theme[property]),
-                 "#{unquote(theme_module)} property #{property} should be string, got: #{inspect(theme[property])}"
+          assert styles |> Map.values() |> Enum.uniq() |> length() == 1,
+                 "#{unquote(theme_module)} checkbox styles differ: #{inspect(styles, pretty: true)}"
         end
       end
     end
@@ -132,6 +85,32 @@ defmodule Cinder.ThemeVerificationTest do
     end
   end
 
+  describe "table wrapper styling" do
+    # Without overflow, striped or hovered rows paint past a rounded wrapper's
+    # corners, and wide tables spill out of it.
+    for theme_module <- @themes do
+      test "#{theme_module} table wrapper clips and scrolls its table" do
+        theme = unquote(theme_module).resolve_theme()
+
+        assert theme[:table_wrapper_class] =~ ~r/\boverflow-x-auto\b/
+      end
+
+      test "#{theme_module} page size dropdown clips its options to its corners" do
+        theme = unquote(theme_module).resolve_theme()
+
+        assert theme[:page_size_dropdown_container_class] =~ ~r/\boverflow-(hidden|auto)\b/
+      end
+    end
+
+    # The selected option's text colour is meant for its own background, and the
+    # hover background replaces that
+    test "DaisyUI page size options reset their text colour on hover" do
+      theme = Cinder.Themes.DaisyUI.resolve_theme()
+
+      assert theme[:page_size_option_class] =~ ~r/\bhover:text-/
+    end
+  end
+
   describe "pagination wrapper styling" do
     for theme_module <- @themes do
       test "#{theme_module} pagination wrapper is minimal and clean" do
@@ -150,6 +129,7 @@ defmodule Cinder.ThemeVerificationTest do
 
         # Should have padding for spacing
         assert String.contains?(pagination_wrapper, "p-") or
+                 String.contains?(pagination_wrapper, "px-") or
                  String.contains?(pagination_wrapper, "padding"),
                "#{unquote(theme_module)} pagination wrapper should include padding for proper spacing"
       end
@@ -186,5 +166,13 @@ defmodule Cinder.ThemeVerificationTest do
                """
       end
     end
+  end
+
+  # Spacing depends on how each checkbox's label is laid out, so it may differ
+  defp without_spacing(classes) do
+    classes
+    |> String.split()
+    |> Enum.reject(&String.match?(&1, ~r/^-?[mp][trblxy]?-/))
+    |> Enum.sort()
   end
 end

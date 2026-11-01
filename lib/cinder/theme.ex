@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Theme do
   @moduledoc """
   Theme management for Cinder table components.
@@ -192,7 +196,7 @@ defmodule Cinder.Theme do
     grid_item_clickable_class: "cursor-pointer hover:shadow-md transition-shadow",
 
     # Selection
-    selection_checkbox_class: "w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500",
+    selection_checkbox_class: "",
     selected_row_class: "bg-blue-50",
     grid_selection_overlay_class: "mb-2",
     selected_item_class: "ring-2 ring-blue-500",
@@ -273,11 +277,13 @@ defmodule Cinder.Theme do
 
   ## Examples
 
-      iex> Cinder.Theme.merge("modern")
-      %{container_class: "bg-white shadow-lg rounded-xl border border-gray-100 overflow-hidden", ...}
+      iex> Cinder.Theme.merge("modern").container_class
+      "bg-white shadow-lg rounded-xl border border-gray-100 [&>*:first-child]:rounded-t-xl [&>*:last-child]:rounded-b-xl"
 
-      iex> Cinder.Theme.merge(MyApp.CustomTheme)
-      %{container_class: "custom-container", ...}
+  A theme module (`use Cinder.Theme`) works the same way:
+
+      Cinder.Theme.merge(MyApp.CustomTheme)
+      #=> %{container_class: "custom-container", ...}
 
   """
   def merge(theme_config)
@@ -362,11 +368,8 @@ defmodule Cinder.Theme do
     ~w(compact daisy_ui dark flowbite futuristic modern retro)
   end
 
-  @doc """
-  Validates a theme configuration.
-
-  Returns :ok if the theme is valid, or {:error, reason} if invalid.
-  """
+  @doc false
+  @deprecated "Unused by Cinder, and removed in 1.0"
   def validate(theme_module) when is_atom(theme_module) do
     if Code.ensure_loaded?(theme_module) and function_exported?(theme_module, :resolve_theme, 0) do
       # For DSL-based themes, use the DSL validation
@@ -413,6 +416,7 @@ defmodule Cinder.Theme do
   @doc """
   Validates that a theme property key is valid.
   """
+  @deprecated "Unused by Cinder; removed in 1.0"
   def valid_property?(key) when is_atom(key) do
     Map.has_key?(@theme_defaults, key) or key in @optional_theme_properties
   end

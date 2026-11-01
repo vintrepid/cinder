@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Theme.Docs do
   @moduledoc """
   Auto-generates theme documentation from `Cinder.Theme.complete_default/0`.
@@ -10,6 +14,8 @@ defmodule Cinder.Theme.Docs do
   @doc """
   Updates the theming guide with auto-generated property reference documentation.
   """
+  # A build-time task writing a path it builds itself, never one from input
+  # sobelow_skip ["Traversal.FileModule"]
   def write_docs! do
     [prelude, _ | rest] =
       @theming_file

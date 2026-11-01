@@ -1,6 +1,10 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Themes.Dark do
   @moduledoc """
-  An elegant dark theme with smooth gradients and modern styling.
+  A dark theme with gradients and purple and blue accents.
 
   Features:
   - Rich dark backgrounds with subtle gradients
@@ -126,7 +130,7 @@ defmodule Cinder.Themes.Dark do
   set :filter_multicheckboxes_option_class, "flex items-center space-x-3"
 
   set :filter_multicheckboxes_checkbox_class,
-      "h-4 w-4 bg-gray-700 border-gray-600 rounded checked:bg-purple-500 checked:border-purple-500 focus:ring-purple-500 focus:ring-2 cursor-pointer"
+      "h-4 w-4 bg-gray-700 border-gray-600 rounded checked:bg-purple-500 checked:border-purple-500 focus:ring-purple-500 focus:ring-2 cursor-pointer mr-2"
 
   set :filter_multicheckboxes_label_class, "text-sm font-medium text-gray-300 cursor-pointer"
   # Range filters
@@ -154,7 +158,7 @@ defmodule Cinder.Themes.Dark do
       "flex items-center px-3 py-1 text-sm font-medium text-gray-300 bg-gray-800 border border-gray-600 rounded hover:bg-gray-700 hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all duration-200 cursor-pointer"
 
   set :page_size_dropdown_container_class,
-      "bg-gray-800 border border-gray-600 rounded shadow-lg"
+      "bg-gray-800 border border-gray-600 rounded shadow-lg overflow-hidden"
 
   set :page_size_option_class,
       "w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white cursor-pointer"

@@ -1,7 +1,11 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.MixProject do
   use Mix.Project
 
-  @version "0.17.0"
+  @version "1.0.0-dev"
   @source_url "https://github.com/sevenseacat/cinder"
 
   def project do
@@ -11,6 +15,7 @@ defmodule Cinder.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
+      compilers: [:phoenix_live_view] ++ Mix.compilers(),
       consolidate_protocols: Mix.env() == :prod,
       deps: deps(),
       docs: docs(),
@@ -55,6 +60,8 @@ defmodule Cinder.MixProject do
   defp deps do
     [
       {:ash, "~> 3.33 and >= 3.33.1"},
+      {:ash_sql, ">= 0.6.3", optional: true},
+      {:lazy_html, ">= 0.1.0", only: :test},
       {:ash_phoenix, "~> 2.3 and >= 2.3.25"},
       {:phoenix_live_view, "~> 1.2 and >= 1.2.11"},
       {:gettext, "~> 1.0.2"},
@@ -78,7 +85,7 @@ defmodule Cinder.MixProject do
   end
 
   defp description do
-    "A powerful, intelligent data table component for Phoenix LiveView applications with seamless Ash Framework integration."
+    "Tables, lists and grids of Ash resources in Phoenix LiveView, with filtering, sorting, search and pagination."
   end
 
   defp package do
@@ -88,7 +95,7 @@ defmodule Cinder.MixProject do
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url, "Website" => "https://cinder.sevenseacat.net"},
       files:
-        ~w(lib priv/cinder.css priv/themes i18n .formatter.exs mix.exs README.md CHANGELOG.md LICENSE usage-rules.md)
+        ~w(lib priv/cinder.css priv/themes i18n .formatter.exs mix.exs README.md CHANGELOG.md LICENSE LICENSES REUSE.toml usage-rules.md)
     ]
   end
 
@@ -97,6 +104,7 @@ defmodule Cinder.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
+      logo: "logos/buddy-icon.png",
       extras: [
         "README.md",
         "docs/getting-started.md",
@@ -111,6 +119,8 @@ defmodule Cinder.MixProject do
         "docs/examples.md",
         "CHANGELOG.md"
       ],
+      # They name deprecated functions, which are hidden from the docs
+      skip_undefined_reference_warnings_on: ["docs/upgrading.md", "CHANGELOG.md"],
       groups_for_modules: [
         "Core Components": [
           Cinder,
@@ -153,7 +163,8 @@ defmodule Cinder.MixProject do
           Cinder.FilterManager,
           Cinder.Filter.Debug,
           Cinder.PageSize,
-          Cinder.BulkActionExecutor
+          Cinder.BulkActionExecutor,
+          Cinder.Selection
         ],
         Deprecated: [
           Cinder.Table,

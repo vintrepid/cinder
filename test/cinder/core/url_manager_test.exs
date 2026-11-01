@@ -3,6 +3,8 @@ defmodule Cinder.UrlManagerTest do
 
   alias Cinder.UrlManager
 
+  doctest Cinder.UrlManager
+
   describe "encode_state/1" do
     test "encodes complete state with filters, pagination, and sorting" do
       state = %{
@@ -281,6 +283,45 @@ defmodule Cinder.UrlManagerTest do
 
       assert result == %{}
     end
+
+    test "joins a custom filter's list value with commas" do
+      filters = %{"tags" => %{type: :my_tags, value: ["a", "b"], operator: :in}}
+
+      assert UrlManager.encode_filters(filters) == %{tags: "a,b"}
+    end
+
+    test "leaves out a custom filter's value it can't encode, logging the filter and type" do
+      filters = %{
+        "name" => %{type: :text, value: "x", operator: :contains},
+        "price" => %{type: :my_range, value: %{min: 1, max: 10}, operator: :between}
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert UrlManager.encode_filters(filters) == %{name: "x"}
+        end)
+
+      assert log =~ ~s("price")
+      assert log =~ ":my_range"
+    end
+  end
+
+  # Regression: a URL could carry any number of multi-select values, each becoming
+  # part of the query
+  describe "decode_filters/2 with multi-select values" do
+    test "keeps only unique values that are among the filter's options" do
+      columns = [
+        %{
+          field: "tags",
+          filterable: true,
+          filter_type: :multi_select,
+          filter_options: [options: [{"A", "a"}, {"B", "b"}]]
+        }
+      ]
+
+      %{"tags" => filter} = UrlManager.decode_filters(%{"tags" => "a,a,b,zzz,a"}, columns)
+      assert filter.value == ["a", "b"]
+    end
   end
 
   describe "decode_filters/2" do
@@ -456,39 +497,39 @@ defmodule Cinder.UrlManagerTest do
     end
   end
 
-  describe "decode_sort/1" do
+  describe "parse_sort/1" do
     test "decodes single ascending sort" do
-      result = UrlManager.decode_sort("title")
+      result = UrlManager.parse_sort("title")
 
       assert result == [{"title", :asc}]
     end
 
     test "decodes single descending sort" do
-      result = UrlManager.decode_sort("-title")
+      result = UrlManager.parse_sort("-title")
 
       assert result == [{"title", :desc}]
     end
 
     test "decodes multiple sorts" do
-      result = UrlManager.decode_sort("-title,created_at,-price")
+      result = UrlManager.parse_sort("-title,created_at,-price")
 
       assert result == [{"title", :desc}, {"created_at", :asc}, {"price", :desc}]
     end
 
     test "filters out empty sort fields" do
-      result = UrlManager.decode_sort("title,,created_at")
+      result = UrlManager.parse_sort("title,,created_at")
 
       assert result == [{"title", :asc}, {"created_at", :asc}]
     end
 
     test "handles nil input" do
-      result = UrlManager.decode_sort(nil)
+      result = UrlManager.parse_sort(nil)
 
       assert result == []
     end
 
     test "handles empty string" do
-      result = UrlManager.decode_sort("")
+      result = UrlManager.parse_sort("")
 
       assert result == []
     end
@@ -511,6 +552,15 @@ defmodule Cinder.UrlManagerTest do
 
     test "handles nil input" do
       assert UrlManager.decode_page(nil) == 1
+    end
+
+    # Regression: any page number became the query's offset, so a huge one could
+    # overflow the data layer's integers (and a long digit string cost CPU to parse)
+    test "caps the page, and ignores absurdly long numbers" do
+      assert UrlManager.decode_page("1000000") == 1_000_000
+      assert UrlManager.decode_page("1000001") == 1_000_000
+      assert UrlManager.decode_page("99999999999999999999") == 1_000_000
+      assert UrlManager.decode_page(String.duplicate("9", 5000)) == 1
     end
 
     test "handles non-string input" do
@@ -601,11 +651,15 @@ defmodule Cinder.UrlManagerTest do
     end
   end
 
+  # Deprecated (unused by Cinder, removed in 1.0), but it still works until then
   describe "validate_url_params/1" do
+    # Called through apply/3, so the deprecation doesn't warn when the tests compile
+    defp validate_url_params(params), do: apply(UrlManager, :validate_url_params, [params])
+
     test "validates normal parameters" do
       params = %{"title" => "test", "page" => "2"}
 
-      assert UrlManager.validate_url_params(params) == {:ok, params}
+      assert validate_url_params(params) == {:ok, params}
     end
 
     test "rejects too many parameters" do
@@ -614,21 +668,21 @@ defmodule Cinder.UrlManagerTest do
         |> Enum.map(fn i -> {"key#{i}", "value#{i}"} end)
         |> Enum.into(%{})
 
-      assert UrlManager.validate_url_params(params) == {:error, "Too many URL parameters"}
+      assert validate_url_params(params) == {:error, "Too many URL parameters"}
     end
 
     test "rejects parameters that are too long" do
       long_value = String.duplicate("a", 1001)
       params = %{"title" => long_value}
 
-      assert UrlManager.validate_url_params(params) == {:error, "URL parameter too long"}
+      assert validate_url_params(params) == {:error, "URL parameter too long"}
     end
 
     test "rejects non-map input" do
-      assert UrlManager.validate_url_params("not a map") ==
+      assert validate_url_params("not a map") ==
                {:error, "Invalid URL parameters format"}
 
-      assert UrlManager.validate_url_params(nil) == {:error, "Invalid URL parameters format"}
+      assert validate_url_params(nil) == {:error, "Invalid URL parameters format"}
     end
   end
 

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 if Code.ensure_loaded?(Igniter) do
   defmodule Mix.Tasks.Cinder.Install do
     @example "mix cinder.install"
@@ -33,8 +37,9 @@ if Code.ensure_loaded?(Igniter) do
     ## What it does
 
     1. Adds Cinder's files to your Tailwind configuration content paths
-    2. Provides setup instructions for using Cinder in your application
-    3. Shows example usage to get you started quickly
+    2. Registers Cinder's LiveView hooks in your `assets/js/app.js`
+    3. Provides setup instructions for using Cinder in your application
+    4. Shows example usage to get you started quickly
 
     ## Tailwind Configuration
 
@@ -49,9 +54,8 @@ if Code.ensure_loaded?(Igniter) do
 
     After installation:
 
-    1. Add Cinder.setup() to your Application.start/2 function (if using custom filters)
-    2. Start using Cinder tables in your LiveView templates
-    3. Explore the documentation for advanced features
+    1. Start using Cinder collections in your LiveView templates
+    2. Explore the documentation for advanced features
     """
 
     @shortdoc "Install Cinder and configure Tailwind CSS"
@@ -72,6 +76,7 @@ if Code.ensure_loaded?(Igniter) do
       |> Igniter.Project.Formatter.import_dep(:cinder)
       |> configure_tailwind()
       |> configure_default_theme()
+      |> Mix.Tasks.Cinder.Upgrade.import_colocated_hooks(%{})
     end
 
     @tailwind_v3_prefix """
@@ -300,9 +305,9 @@ else
 
       3. Start using Cinder in your templates:
       ```elixir
-      <Cinder.Table.table resource={MyApp.User} actor={@current_user}>
+      <Cinder.collection resource={MyApp.User} actor={@current_user}>
         <:col :let={user} field="name" filter sort>{user.name}</:col>
-      </Cinder.Table.table>
+      </Cinder.collection>
       ```
       """)
 

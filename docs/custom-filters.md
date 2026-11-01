@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Custom Filters
 
 This guide covers how to create custom filters for Cinder tables. Custom filters allow you to extend Cinder's filtering capabilities with domain-specific UI components and logic.
@@ -58,7 +64,7 @@ defmodule MyApp.Filters.CaseInsensitiveText do
 
   # Override to customize query building
   @impl true
-  def build_query(query, field, %{value: value} = filter_value) do
+  def build_query(query, field, %{value: value}) do
     field_atom = String.to_atom(field)
     # Use ilike for case-insensitive matching
     Ash.Query.filter(query, ilike(^ref(field_atom), ^"%#{value}%"))
@@ -71,7 +77,6 @@ end
 - `--template` or `-t` - Choose the base filter to copy from
 - `--no-tests` - Skip generating test file
 - `--no-config` - Skip automatic configuration registration
-- `--no-setup` - Skip setup instructions
 
 ## Quick Start
 
@@ -235,30 +240,7 @@ config :cinder, :filters, [
 ]
 ```
 
-### 2. Initialize Cinder
-
-Call `Cinder.setup()` in your application startup:
-
-```elixir
-# lib/my_app/application.ex
-defmodule MyApp.Application do
-  use Application
-
-  def start(_type, _args) do
-    # Set up Cinder with configured filters
-    Cinder.setup()
-
-    children = [
-      # your supervisors...
-    ]
-
-    opts = [strategy: :one_for_one, name: MyApp.Supervisor]
-    Supervisor.start_link(children, opts)
-  end
-end
-```
-
-### 3. Use in Tables
+### 2. Use in Collections
 
 Use your custom filter in column definitions:
 
@@ -296,6 +278,14 @@ Processes raw form/URL input into structured filter data.
 ```
 
 Must return a map with `:type`, `:value`, `:operator` keys, or `nil`.
+
+Return `nil` if the value can't be used, such as an invalid date from a hand-edited URL. The
+filter is then ignored, instead of the query failing.
+
+When the collection syncs with the URL, the filter's `:value` is saved in the URL, and
+`process/2` gets it back from there as a string. So handle a string as well as whatever your
+form inputs send. A list is saved with its items joined by commas (`"a,b"`). A map can't be
+saved in the URL, so keep `:value` to strings, numbers, atoms, or lists of them.
 
 #### `validate/1`
 Validates a processed filter value.
@@ -370,25 +360,36 @@ def process(_raw_value, _column), do: nil
 
 ### Range Filters
 
+Name the inputs with `field_name(@column.field, "min")` and `field_name(@column.field, "max")`,
+and both the form and the URL give you `"min,max"`:
+
 ```elixir
-def process(%{"min" => min, "max" => max}, _column) do
-  with {min_val, ""} <- Integer.parse(min),
+def process(raw_value, _column) when is_binary(raw_value) do
+  with [min, max] <- String.split(raw_value, ","),
+       {min_val, ""} <- Integer.parse(min),
        {max_val, ""} <- Integer.parse(max),
        true <- min_val <= max_val do
     %{
       type: :my_range,
-      value: %{min: min_val, max: max_val},
+      value: [min_val, max_val],
       operator: :between
     }
   else
     _ -> nil
   end
 end
+
+def process(_raw_value, _column), do: nil
 ```
 
 ### Multi-Value Filters
 
 ```elixir
+# From the URL, the values come back joined by commas
+def process(raw_value, column) when is_binary(raw_value) do
+  process(String.split(raw_value, ","), column)
+end
+
 def process(raw_values, _column) when is_list(raw_values) do
   values = Enum.reject(raw_values, &(&1 == "" or is_nil(&1)))
 
@@ -512,8 +513,8 @@ end
 Check filter registration status:
 
 ```elixir
-# List all registered filters
-Cinder.Filters.Registry.list_filters()
+# Every filter type, built-in and custom
+Cinder.Filters.Registry.all_filters_with_custom()
 
 # Check if a filter is custom
 Cinder.Filters.Registry.custom_filter?(:slider)
@@ -556,18 +557,8 @@ end
 
 ### 3. Make Filters Configurable
 
-```elixir
-# Column definition
-%{
-  field: "score",
-  filter: :slider,
-  filter_options: [
-    min: 0,
-    max: 1000,
-    step: 10,
-    operator: :less_than_or_equal
-  ]
-}
+```heex
+<:col field="score" filter={[type: :slider, min: 0, max: 1000, step: 10, operator: :less_than_or_equal]} />
 ```
 
 ### 4. Document Your Filters
@@ -586,11 +577,7 @@ defmodule MyApp.Filters.Slider do
 
   ## Usage
 
-      %{
-        field: "price",
-        filter: :slider,
-        filter_options: [min: 0, max: 1000, step: 50, operator: :less_than_or_equal]
-      }
+      <:col field="price" filter={[type: :slider, min: 0, max: 1000, step: 50, operator: :less_than_or_equal]} />
   """
 
   use Cinder.Filter
@@ -606,7 +593,6 @@ This is the most critical callback - without it, your filter won't actually filt
 
 ### Filter Not Appearing
 - Check configuration: `config :cinder, :filters, [slider: MyApp.Filters.Slider]`
-- Verify `Cinder.setup()` was called
 - Ensure column uses `filter={:slider}` (not `filter_type`)
 - Check console for registration errors
 
@@ -617,13 +603,12 @@ This is the most critical callback - without it, your filter won't actually filt
 - Add logging to debug query building
 
 ### Configuration Issues
-- Check config syntax (proper map format)
+- Check config syntax (a keyword list: `config :cinder, :filters, slider: MyApp.Filters.Slider`)
 - Verify module names are correct
 - Run `Cinder.Filters.Registry.validate_custom_filters()`
 
 ### URL State Not Persisting
-- Ensure using `Cinder.UrlSync`
-- Check `handle_params/3` implementation
+- Ensure the LiveView has `use Cinder.UrlSync`
 - Verify `url_state={@url_state}` attribute
 
 ## Advanced Topics
@@ -644,8 +629,8 @@ end
 
 ```elixir
 def render(column, current_value, theme, assigns) do
-  # Access other filter values
-  category_filter = get_in(assigns, [:filters, "category"])
+  # Every filter's current value, by field
+  category_filter = assigns.filter_values["category"]
 
   # Adjust options based on other filters
   options = get_options_for_category(category_filter)
@@ -671,7 +656,6 @@ end
 
 - Use `use Cinder.Filter` to get all necessary imports and behavior
 - Configure filters in `config.exs` with `:filters` key
-- Call `Cinder.setup()` once in application startup
 - Use `filter={:my_filter}` in column definitions
 - Always implement `build_query/3` - this is what actually filters data
 - Handle both direct fields and relationship fields (dot notation)

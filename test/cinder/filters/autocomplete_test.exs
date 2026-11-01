@@ -117,46 +117,13 @@ defmodule Cinder.Filters.AutocompleteTest do
   end
 
   describe "build_query/3" do
-    defmodule TestResource do
-      use Ash.Resource,
-        domain: Cinder.Filters.AutocompleteTest.TestDomain,
-        data_layer: Ash.DataLayer.Ets
-
-      attributes do
-        uuid_primary_key(:id)
-        attribute(:category_id, :string, public?: true)
-        attribute(:name, :string, public?: true)
-      end
-
-      actions do
-        defaults([:read, create: [:category_id, :name]])
-      end
-    end
-
-    defmodule TestDomain do
-      use Ash.Domain, validate_config_inclusion?: false
-
-      resources do
-        resource(TestResource)
-      end
-    end
-
-    test "builds equals filter for simple field" do
-      query = Ash.Query.new(TestResource)
+    test "matches the chosen option by equality" do
+      hit = Cinder.Test.FilterRecord.seed(name: "electronics")
+      _partial = Cinder.Test.FilterRecord.seed(name: "consumer electronics")
       filter_value = %{type: :autocomplete, value: "electronics", operator: :equals}
 
-      result = Autocomplete.build_query(query, "category_id", filter_value)
-
-      assert %Ash.Query{} = result
-    end
-
-    test "handles string field names" do
-      query = Ash.Query.new(TestResource)
-      filter_value = %{type: :autocomplete, value: "123", operator: :equals}
-
-      result = Autocomplete.build_query(query, "category_id", filter_value)
-
-      assert %Ash.Query{} = result
+      assert Cinder.Test.FilterRecord.matching_ids(Autocomplete, "name", filter_value) ==
+               MapSet.new([hit.id])
     end
   end
 
@@ -197,8 +164,10 @@ defmodule Cinder.Filters.AutocompleteTest do
       # Check for JS commands for dropdown show/hide
       assert html =~ "phx-focus"
       assert html =~ "phx-click-away"
-      # Check for radio button inputs (like select filter)
+      # Options are visually hidden radios inside clickable labels, like the select filter's
       assert html =~ "type=\"radio\""
+      assert html =~ "<label"
+      assert html =~ "class=\"sr-only\""
     end
 
     test "renders with current value showing label" do
@@ -324,37 +293,6 @@ defmodule Cinder.Filters.AutocompleteTest do
       refute html =~ "Option 20"
       # "More" hint shown when there are more options
       assert html =~ "Type to search more options"
-    end
-
-    test "uses label and radio button elements for options like select filter" do
-      column = %{
-        field: "category_id",
-        label: "Category",
-        filter_options: [
-          options: [{"Electronics", "1"}]
-        ]
-      }
-
-      theme = %{
-        filter_select_container_class: "container",
-        filter_text_input_class: "input",
-        filter_select_dropdown_class: "dropdown",
-        filter_select_option_class: "option",
-        filter_select_label_class: "label",
-        filter_select_empty_class: "empty"
-      }
-
-      assigns = %{target: nil, raw_filter_params: %{}}
-
-      result = Autocomplete.render(column, "1", theme, assigns)
-
-      html = Phoenix.HTML.Safe.to_iodata(result) |> IO.iodata_to_binary()
-
-      # Options should use label elements with radio buttons like select filter
-      assert html =~ "<label"
-      assert html =~ "flex items-center cursor-pointer"
-      assert html =~ "type=\"radio\""
-      assert html =~ "class=\"sr-only\""
     end
   end
 end

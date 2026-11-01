@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Controls do
   @moduledoc """
   Data preparation and render helpers for custom filter/search control layouts.
@@ -81,6 +85,8 @@ defmodule Cinder.Controls do
   - `:filter_mode` — current filter display mode
   - `:filter_values` — shared filter values map (for render helpers)
   - `:raw_filter_params` — raw form params (for autocomplete filters)
+  - `:total_count` — how many records match, or `nil` until counted (and when counting is off)
+  - `:count_failed?` — whether counting failed, so the count will not arrive
   """
   def build_controls_data(assigns) do
     filterable_columns = Enum.filter(assigns.columns, & &1.filterable)
@@ -92,7 +98,7 @@ defmodule Cinder.Controls do
     filters =
       Enum.map(filterable_columns, fn column ->
         current_value = Map.get(filter_values, column.field, "")
-        key = control_key(column.field)
+        key = Cinder.Filter.Helpers.declared_field_atom(column.field)
 
         {key,
          %{
@@ -131,21 +137,11 @@ defmodule Cinder.Controls do
       filter_values: filter_values,
       raw_filter_params: raw_filter_params,
       has_default_filters: map_size(Map.get(assigns, :default_filters, %{}) || %{}) > 0,
-      show_all?: Map.get(assigns, :show_all?, false)
+      show_all?: Map.get(assigns, :show_all?, false),
+      total_count: Map.get(assigns, :total_count),
+      count_failed?: Map.get(assigns, :count_failed?, false)
     }
   end
-
-  defp control_key(field) when is_binary(field) do
-    if String.contains?(field, [".", "["]) do
-      field
-    else
-      String.to_existing_atom(field)
-    end
-  end
-
-  # ============================================================================
-  # RENDER HELPERS
-  # ============================================================================
 
   @doc """
   Renders a single filter (label + input + clear button).
@@ -335,6 +331,7 @@ defmodule Cinder.Controls do
   - `filter_mode` — display mode (true, :toggle, :toggle_open)
   - `target` — LiveComponent target
   - `theme` — theme map
+  - `has_filters` — whether to show the "Clear all" button (default true)
   """
   attr :table_id, :string, required: true
   attr :filters_label, :string, required: true
@@ -386,9 +383,10 @@ defmodule Cinder.Controls do
         <button
           :if={@has_filters}
           type="button"
+          data-cinder-clear
           phx-click="clear_all_filters"
           phx-target={@target}
-          class={[@theme.filter_clear_all_class, if(@active_filter_count == 0 and not @show_all?, do: "invisible", else: "")]}
+          class={[@theme.filter_clear_all_class, if(@active_filter_count == 0 and not @show_all?, do: "invisible group-data-[cinder-partial]/cinder-filters:visible", else: "")]}
           data-key="filter_clear_all_class"
         >
           {if @show_all? and @has_default_filters,

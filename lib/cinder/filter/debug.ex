@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filter.Debug do
   @moduledoc """
   Debugging tools for custom filter development.
@@ -327,8 +331,8 @@ defmodule Cinder.Filter.Debug do
 
   ## Examples
 
-      iex> Cinder.Filter.Debug.enable_debug()
-      :ok
+      Cinder.Filter.Debug.enable_debug()
+      #=> :ok
 
   """
   def enable_debug do
@@ -345,8 +349,8 @@ defmodule Cinder.Filter.Debug do
 
   ## Examples
 
-      iex> Cinder.Filter.Debug.disable_debug()
-      :ok
+      Cinder.Filter.Debug.disable_debug()
+      #=> :ok
 
   """
   def disable_debug do

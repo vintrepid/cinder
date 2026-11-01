@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Themes.Retro do
   @moduledoc """
   A retro 80s-inspired theme with neon colors and bold styling.
@@ -124,7 +128,7 @@ defmodule Cinder.Themes.Retro do
       "px-3 py-2 hover:bg-fuchsia-800 hover:shadow-lg hover:shadow-fuchsia-400/30 border-b border-cyan-400/50 last:border-b-0 cursor-pointer"
 
   set :filter_multiselect_checkbox_class,
-      "h-4 w-4 bg-gray-800 border-cyan-400 border-2 rounded checked:bg-fuchsia-500 checked:border-fuchsia-500 focus:ring-fuchsia-400 focus:ring-2 cursor-pointer mr-2"
+      "h-5 w-5 bg-gray-800 border-cyan-400 border-2 rounded checked:bg-fuchsia-500 checked:border-fuchsia-500 focus:ring-fuchsia-400 focus:ring-2 cursor-pointer mr-2"
 
   set :filter_multiselect_label_class,
       "text-sm font-bold text-cyan-100 cursor-pointer uppercase tracking-wide select-none flex-1"
@@ -137,7 +141,7 @@ defmodule Cinder.Themes.Retro do
   set :filter_multicheckboxes_option_class, "flex items-center space-x-3"
 
   set :filter_multicheckboxes_checkbox_class,
-      "h-5 w-5 bg-gray-800 border-cyan-400 border-2 rounded checked:bg-fuchsia-500 checked:border-fuchsia-500 focus:ring-fuchsia-400 focus:ring-2 cursor-pointer"
+      "h-5 w-5 bg-gray-800 border-cyan-400 border-2 rounded checked:bg-fuchsia-500 checked:border-fuchsia-500 focus:ring-fuchsia-400 focus:ring-2 cursor-pointer mr-2"
 
   set :filter_multicheckboxes_label_class,
       "text-sm font-bold text-cyan-100 cursor-pointer uppercase tracking-wide"
@@ -169,7 +173,7 @@ defmodule Cinder.Themes.Retro do
       "flex items-center px-4 py-2 text-sm font-bold text-cyan-100 bg-gray-800 border-2 border-cyan-400 rounded hover:bg-fuchsia-800 hover:border-fuchsia-400 hover:shadow-lg hover:shadow-fuchsia-400/30 focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all duration-200 cursor-pointer uppercase tracking-wide"
 
   set :page_size_dropdown_container_class,
-      "bg-gray-800 border-2 border-cyan-400 rounded shadow-lg shadow-cyan-400/20"
+      "bg-gray-800 border-2 border-cyan-400 rounded shadow-lg shadow-cyan-400/20 overflow-hidden"
 
   set :page_size_option_class,
       "w-full text-left px-4 py-2 text-sm font-bold text-cyan-100 hover:bg-fuchsia-800 hover:border-fuchsia-400 hover:text-yellow-400 cursor-pointer uppercase tracking-wide"
@@ -237,7 +241,7 @@ defmodule Cinder.Themes.Retro do
 
   # Selection
   set :selection_checkbox_class,
-      "w-4 h-4 text-fuchsia-500 checked:bg-fuchsia-500 checked:border-fuchsia-500 bg-gray-900 border-2 border-cyan-400 rounded focus:ring-fuchsia-400"
+      "h-5 w-5 bg-gray-800 border-cyan-400 border-2 rounded checked:bg-fuchsia-500 checked:border-fuchsia-500 focus:ring-fuchsia-400 focus:ring-2 cursor-pointer"
 
   set :selected_row_class, "bg-fuchsia-900/30 border-fuchsia-400"
   set :grid_selection_overlay_class, "mb-2"

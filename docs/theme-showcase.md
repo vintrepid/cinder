@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Theme Showcase
 
 This document showcases the dramatic visual variety possible with Cinder's theming system. Each theme completely transforms the appearance while maintaining full functionality.
@@ -20,7 +26,7 @@ The default theme provides only essential usability classes - no styling, perfec
 </Cinder.collection>
 ```
 
-**Classes applied**: Only `overflow-x-auto`, `w-full border-collapse`, `text-left whitespace-nowrap`
+**Classes applied**: Mostly unstyled: layout and spacing only, for you to build on
 
 ## Modern Theme
 

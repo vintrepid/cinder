@@ -1,16 +1,16 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.UrlSync do
   @moduledoc """
-  Simple URL synchronization helper for collection components.
-
-  This module provides an easy way to enable URL state synchronization
-  for Cinder collection components with minimal setup.
+  Keeps a collection's filters, sorting, search and page in the URL.
 
   ## Usage
 
-  1. Add `use Cinder.UrlSync` to your LiveView
-  2. Call `Cinder.UrlSync.handle_params/3` in your `handle_params/3` callback
-  3. Pass `url_state={@url_state}` to your collection component
-  4. That's it! The helper handles all URL updates automatically.
+  1. Add `use Cinder.UrlSync` to your LiveView, after `use MyAppWeb, :live_view`
+     (or `use Phoenix.LiveView`).
+  2. Pass `url_state={@url_state}` to your collection.
 
   ## Example
 
@@ -20,11 +20,6 @@ defmodule Cinder.UrlSync do
 
         def mount(_params, _session, socket) do
           {:ok, assign(socket, :current_user, get_current_user())}
-        end
-
-        def handle_params(params, uri, socket) do
-          socket = Cinder.UrlSync.handle_params(params, uri, socket)
-          {:noreply, socket}
         end
 
         def render(assigns) do
@@ -41,11 +36,8 @@ defmodule Cinder.UrlSync do
         end
       end
 
-  The helper automatically:
-  - Handles `:table_state_change` messages from collection components
-  - Updates the URL with new collection state
-  - Preserves other URL parameters
-  - Works with any number of collection components on the same page
+  Your LiveView can still have its own `handle_params/3` and `handle_info/2`: they run as
+  usual, and `@url_state` is already assigned when `handle_params/3` runs.
 
   ## Custom URL Parameters
 
@@ -73,12 +65,16 @@ defmodule Cinder.UrlSync do
   import Phoenix.Component, only: [assign: 3]
 
   @doc """
-  Adds URL sync support to a LiveView.
+  Adds URL sync to a LiveView. It must come after `use Phoenix.LiveView` (or
+  `use MyAppWeb, :live_view`).
 
-  This macro injects the necessary `handle_info/2` callback to handle
-  collection state changes and update the URL accordingly.
+  Adds `on_mount Cinder.UrlSync`, and a `handle_params/3` that does nothing, which your
+  LiveView can replace with its own.
   """
   defmacro __using__(_opts) do
+    # `on_mount` needs `use Phoenix.LiveView` to have run, and this order never used to
+    # matter, so say how to fix it. (Checked as the module body runs: the earlier `use`
+    # hasn't set `@behaviour` yet while this macro expands.)
     quote do
       @doc """
       Handles collection state changes and updates the URL.
@@ -94,8 +90,54 @@ defmodule Cinder.UrlSync do
         Cinder.UrlSync.persist_state(socket, table_id, encoded_state)
         {:noreply, Cinder.UrlSync.update_url(socket, encoded_state, current_uri)}
       end
+
+      unless Phoenix.LiveView in List.wrap(Module.get_attribute(__MODULE__, :behaviour)) do
+        raise CompileError,
+          file: unquote(__CALLER__.file),
+          line: unquote(__CALLER__.line),
+          description:
+            "`use Cinder.UrlSync` must come after `use Phoenix.LiveView` (or `use MyAppWeb, :live_view`)"
+      end
+
+      require Phoenix.LiveView
+      Phoenix.LiveView.on_mount(Cinder.UrlSync)
+
+      # A patch calls the LiveView's `handle_params/3` without checking it exists, so
+      # without one, some `handle_params` hook has to halt, and that skips the hooks
+      # after it (often this one). Having one means no hook needs to halt. (No `@impl`:
+      # with one, an override is treated as marked too and never gets the missing-`@impl` warning.)
+      def handle_params(_params, _uri, socket), do: {:noreply, socket}
+      defoverridable handle_params: 3
     end
   end
+
+  @doc """
+  Assigns `@url_state` from the URL, and updates the URL when a collection's state changes.
+  `use Cinder.UrlSync` adds it. On its own (`on_mount Cinder.UrlSync`, or on a
+  `live_session`), the LiveView needs a `handle_params/3` if any other hook halts without one.
+  """
+  def on_mount(:default, _params, _session, socket) do
+    {:cont,
+     socket
+     |> Phoenix.LiveView.attach_hook(:cinder_url_sync_params, :handle_params, &params_hook/3)
+     |> Phoenix.LiveView.attach_hook(:cinder_url_sync_info, :handle_info, &info_hook/2)}
+  end
+
+  # Carrying on to a LiveView without its own `handle_params/3` crashes on patch
+  defp params_hook(params, uri, socket) do
+    socket = handle_params(params, uri, socket)
+
+    if function_exported?(socket.view, :handle_params, 3),
+      do: {:cont, socket},
+      else: {:halt, socket}
+  end
+
+  defp info_hook({:table_state_change, _table_id, encoded_state}, socket) do
+    current_uri = get_in(socket.assigns, [:url_state, :uri])
+    {:halt, update_url(socket, encoded_state, current_uri)}
+  end
+
+  defp info_hook(_message, socket), do: {:cont, socket}
 
   @doc """
   Updates the LiveView socket with new URL parameters.
@@ -221,19 +263,11 @@ defmodule Cinder.UrlSync do
   end
 
   @doc """
-  Extracts complete URL state from URL parameters for use with collection components.
+  Decodes URL parameters into a collection's state: its `:filters`, `:current_page`,
+  `:sort_by`, `:page_size`, `:search_term`, and keyset `:after` and `:before`.
 
-  This function can be used in `handle_params/3` to initialize
-  URL state for collection components.
-
-  ## Example
-
-      def handle_params(params, _uri, socket) do
-        url_state = Cinder.UrlSync.extract_url_state(params)
-        socket = assign(socket, :url_state, url_state)
-        {:noreply, socket}
-      end
-
+  Without the collection's columns, filters are only partly decoded and the sort isn't
+  checked. This isn't what `url_state` takes: `use Cinder.UrlSync` builds that for you.
   """
   def extract_url_state(params) when is_map(params) do
     # Handle case where sort_by might be an empty list (causing UrlManager error)
@@ -245,24 +279,13 @@ defmodule Cinder.UrlSync do
         sort -> sort
       end)
 
-    # Use empty columns list since we don't have column context here
-    Cinder.UrlManager.decode_state(safe_params, [])
+    # There are no columns here yet, so the sort is only parsed, not checked. The
+    # component checks it against its columns before applying it.
+    decode_unchecked(safe_params)
   end
 
   @doc """
-  Extracts collection state from URL parameters using empty columns list.
-
-  This function provides a simplified extraction that works without column
-  metadata. It preserves page and sort information but may not fully decode
-  filters (which is why we also preserve raw params in handle_params).
-
-  ## Parameters
-
-  - `params` - URL parameters map
-
-  ## Returns
-
-  Map with `:filters`, `:current_page`, and `:sort_by` keys
+  The same as `extract_url_state/1`.
   """
   def extract_collection_state(params) when is_map(params) do
     # Handle case where sort_by might be an empty list (causing UrlManager error)
@@ -274,13 +297,20 @@ defmodule Cinder.UrlSync do
         sort -> sort
       end)
 
-    # Use empty columns list - this will preserve page/sort but may lose filter details
-    # That's why we also preserve raw params in the url_state
-    Cinder.UrlManager.decode_state(safe_params, [])
+    # There are no columns here yet: filter details may be lost (which is why the raw
+    # params are kept in url_state too), and the sort is only parsed, not checked. The
+    # component checks it against its columns before applying it.
+    decode_unchecked(safe_params)
   end
 
-  # Keep old name for backward compatibility
+  defp decode_unchecked(params) do
+    params
+    |> Cinder.UrlManager.decode_state([])
+    |> Map.put(:sort_by, Cinder.UrlManager.parse_sort(params["sort"]))
+  end
+
   @doc false
+  @deprecated "Use extract_collection_state/1 instead"
   def extract_table_state(params), do: extract_collection_state(params)
 
   # Private helper functions
@@ -288,17 +318,14 @@ defmodule Cinder.UrlSync do
   defp remove_empty_params(params) do
     params
     |> Enum.reject(fn {k, v} ->
-      is_nil(v) or v == "" or (v == "1" and String.contains?(to_string(k), "page"))
+      is_nil(v) or v == "" or {k, v} == {"page", "1"}
     end)
     |> Enum.into(%{})
   end
 
   @doc """
-  Helper function to handle collection state in LiveView handle_params.
-
-  This function extracts URL parameters and creates a URL state object that
-  can be passed to collection components. It should be called from your LiveView's
-  `handle_params/3` callback.
+  Assigns `@url_state` from the URL parameters. `use Cinder.UrlSync` calls it for you, before
+  your own `handle_params/3`, so you don't need to.
 
   ## Parameters
 
@@ -314,26 +341,6 @@ defmodule Cinder.UrlSync do
   - `sort_by` - Sort configuration
   - `uri` - Current URI for URL generation
 
-  ## Example
-
-      def handle_params(params, uri, socket) do
-        socket = Cinder.UrlSync.handle_params(params, uri, socket)
-        {:noreply, socket}
-      end
-
-      def render(assigns) do
-        ~H\"\"\"
-        <Cinder.collection
-          resource={MyApp.User}
-          actor={@current_user}
-          url_state={@url_state}
-        >
-          <:col :let={user} field="name" filter sort>{user.name}</:col>
-        </Cinder.collection>
-        \"\"\"
-      end
-
-  The `@url_state` assign will be available for use with the collection component.
   """
   def handle_params(params, uri \\ nil, socket, opts \\ [])
 
@@ -430,27 +437,11 @@ defmodule Cinder.UrlSync do
   end
 
   @doc """
-  Helper to get the URL state for passing to collection components.
+  Returns `@url_state` from a socket's assigns, or `nil`:
 
-  Use this to get the URL state object created by `handle_params/3`.
+      Cinder.UrlSync.get_url_state(socket.assigns)
 
-  ## Example
-
-      def render(assigns) do
-        ~H\"\"\"
-        <Cinder.collection
-          resource={Album}
-          actor={@current_user}
-          url_state={@url_state}
-          theme="minimal"
-        >
-          <:col :let={album} field="name" filter="text">{album.name}</:col>
-          <:col :let={album} field="artist.name" filter="text">{album.artist.name}</:col>
-        </Cinder.collection>
-        \"\"\"
-      end
-
-  The URL state object contains:
+  It contains:
   - filters: Raw URL parameters for proper filter decoding
   - current_page: Current page number
   - sort_by: Sort configuration

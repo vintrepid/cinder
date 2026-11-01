@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filter do
   @moduledoc """
   Base behavior for Cinder filter implementations.
@@ -7,7 +11,7 @@ defmodule Cinder.Filter do
 
   ## Quick Start
 
-  The most convenient way to create a custom filter is to use this module:
+  Create a custom filter by using this module:
 
       defmodule MyApp.Filters.Slider do
         use Cinder.Filter
@@ -17,7 +21,7 @@ defmodule Cinder.Filter do
           filter_options = Map.get(column, :filter_options, [])
           min_value = get_option(filter_options, :min, 0)
           max_value = get_option(filter_options, :max, 100)
-          current = current_value || min_value
+          current = if current_value in [nil, ""], do: min_value, else: current_value
 
           assigns = %{
             column: column,
@@ -78,19 +82,13 @@ defmodule Cinder.Filter do
         @impl true
         def build_query(query, field, filter_value) do
           %{value: value} = filter_value
-          field_atom = String.to_existing_atom(field)
-          Ash.Query.filter(query, ^ref(field_atom) <= ^value)
+          Cinder.Filter.Helpers.build_ash_filter(query, field, value, :less_than_or_equal)
         end
       end
 
   Then register it in your configuration:
 
-      config :cinder, :filters, %{
-        slider: MyApp.Filters.Slider
-      }
-
-  And call `Cinder.setup()` in your application start function to register
-  all configured filters.
+      config :cinder, :filters, slider: MyApp.Filters.Slider
 
   This automatically:
   - Adds the `@behaviour Cinder.Filter` declaration
@@ -108,7 +106,7 @@ defmodule Cinder.Filter do
       @callback render(column :: map(), current_value :: any(), theme :: map(), assigns :: map()) :: Phoenix.LiveView.Rendered.t()
 
   - `column`: Column configuration with `field`, `label`, `filter_options`
-  - `current_value`: Current filter value (nil if no filter applied)
+  - `current_value`: The `:value` from `process/2`, or an empty value (like `""`) when the filter isn't in use
   - `theme`: Theme configuration with CSS classes
   - `assigns`: Additional assigns from the parent component
 
@@ -140,7 +138,7 @@ defmodule Cinder.Filter do
 
   ### build_query/3
 
-  **Critical for functionality!** Builds the Ash query for this filter.
+  Adds the filter to the Ash query. This is what filters the records.
 
       @callback build_query(query :: Ash.Query.t(), field :: String.t(), filter_value :: map()) :: Ash.Query.t()
 
@@ -172,31 +170,21 @@ defmodule Cinder.Filter do
         Cinder.Filter.Helpers.build_ash_filter(query, field, value, operator)
       end
 
-  ### Basic Field Filtering
+  ### Field Filtering
+
+  `Cinder.Filter.Helpers.build_ash_filter/4` builds the filter for any field notation:
+  direct fields, relationships (`"user.name"`) and embedded fields (below), with
+  `:equals`, `:contains`, `:starts_with`, `:ends_with`, `:in`, and the comparisons
+  (`:greater_than`, `:less_than_or_equal` and so on):
 
       def build_query(query, field, filter_value) do
         %{value: value} = filter_value
-        field_atom = String.to_existing_atom(field)
-        Ash.Query.filter(query, ^ref(field_atom) == ^value)
+        Cinder.Filter.Helpers.build_ash_filter(query, field, value, :equals)
       end
 
-  ### Relationship Filtering
-
-  Handle dot notation fields like "user.name":
-
-      def build_query(query, field, filter_value) do
-        %{value: value} = filter_value
-
-        if String.contains?(field, ".") do
-          path_atoms = field |> String.split(".") |> Enum.map(&String.to_atom/1)
-          {rel_path, [field_atom]} = Enum.split(path_atoms, -1)
-
-          Ash.Query.filter(query, exists(^rel_path, ^ref(field_atom) == ^value))
-        else
-          field_atom = String.to_existing_atom(field)
-          Ash.Query.filter(query, ^ref(field_atom) == ^value)
-        end
-      end
+  Prefer it to building `ref/1` expressions from `field` yourself: it handles every
+  notation, and never turns a name into a new atom (`String.to_atom/1` on names isn't
+  safe in general, since atoms are never garbage collected).
 
   ### Embedded Field Filtering
 
@@ -276,7 +264,7 @@ defmodule Cinder.Filter do
   - `column` - Column definition with filter configuration
 
   ## Returns
-  Structured filter value map or nil if invalid
+  Structured filter value map, or nil if the value can't be used
   """
   @callback process(raw_filter_value(), column()) :: processed_filter_value()
 

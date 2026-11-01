@@ -1,11 +1,83 @@
+<!--
+SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Changelog
 
-## Unreleased
+## v0.18.1 (2026-01-11)
+
+### Bug fixes
+
+* Fixes for the DaisyUI theme: striped rows don't spill out of the table container, card styling is consistent across controls and grid/list items, and the selected page size stays readable on hover.
+* The page size dropdown now clips its options to its rounded corners in every theme.
+* Default column labels for embedded fields now separate each step with `>`, as relationship labels do.
+* Turning `selectable` off now clears the selected items.
+* Date range filters on relationship and embedded fields now find matching records, and include the whole of the end date; through a to-many relationship, one related record has to fall inside the range.
+* Date and date range filters compare the field directly instead of casting it to a date, so a database index on the field can be used.
+* Number range filters through a to-many relationship now need one related record inside the range, rather than one above the minimum and another below the maximum.
+* Filters on fields whose names end in `_from`, `_to`, `_min` or `_max` now filter from the form, instead of being mistaken for half of a range.
+* URL sync no longer leaves out a page size of 1, or a filter value of 1 on a field with "page" in its name.
+* Fields with `one_of` constraints now get a select filter of those values, instead of a text filter.
+* Custom filters with list values now keep them in the URL, and map values no longer crash URL-synced collections.
+
+## v0.18.0 (2026-10-28)
+
+### Breaking changes
+
+* Cinder now requires `phoenix_live_view ~> 1.1`, and ships a colocated hook that your `app.js` must register. Run `mix cinder.upgrade 0.17.0 0.18.0`, or see the [upgrading guide](docs/upgrading.md).
+* Cinder now requires Ash 3.24.5 or later, and `ash_sql` 0.6.3 or later in apps that use it.
+* A filter that fails to build now shows the collection's error state, instead of quietly showing unfiltered results. If a collection shows its error state after upgrading, check your logs for the filter that failed.
 
 ### Features
 
 * Added `initial_load={:sync}`, which puts the first page of data in the server-rendered HTML. Thanks @Alt-iOS! ([#203](https://github.com/sevenseacat/cinder/pull/203))
 * `on_query_change` payloads now carry a `count` key with the total matching records, so parents no longer need their own `Ash.count!`. Thanks @mbaertschi! ([#208](https://github.com/sevenseacat/cinder/pull/208))
+* `refresh_table/3` and `refresh_tables/3` accept `silent: true`, which keeps the current rows on screen without a loading indicator while the refresh runs. Thanks @Alt-iOS! ([#226](https://github.com/sevenseacat/cinder/pull/226))
+* Added `remove_item/3` and `remove_items/3`, which remove rows from a collection without re-querying, dropping them from the selection and the footer count. Thanks @Alt-iOS! ([#229](https://github.com/sevenseacat/cinder/pull/229))
+* `pagination` accepts a keyword list, with a `count` option: `true` (default), `:async` to count in the background, or `false` to skip the total count. Thanks @Alt-iOS! ([#241](https://github.com/sevenseacat/cinder/pull/241))
+* `use Cinder.UrlSync` is now all a LiveView needs for URL sync, without a `handle_params/3` calling `Cinder.UrlSync.handle_params/3`.
+* Columns load what their fields need (relationships in the path, calculations and aggregates), so they no longer need `query_opts={[load: ...]}`. ([#122](https://github.com/sevenseacat/cinder/issues/122))
+* A column's `sort` option accepts `then`, tiebreaker fields sorted after all of the user's sorts, eg. `sort={[then: ["inserted_at"]]}`. Thanks @DGollings! ([#251](https://github.com/sevenseacat/cinder/pull/251))
+* Collections emit `[:cinder, :query]` and `[:cinder, :count]` telemetry spans, and `Ash.Tracer` spans that Ash's own nest inside, saying which collection loaded and with what filters. See the [advanced guide](docs/advanced.md).
+
+### Bugfixes
+
+* Multi-select filters work on `list` aggregates and array calculations, instead of crashing.
+* Multi-select filters on an array field through a relationship (like `albums.tags`) match records whose related records hold the selected values.
+* Columns on a calculation that needs arguments are no longer offered as sortable or filterable, which failed when used.
+* A collection's data load no longer copies the parent LiveView's assigns into its task once per column, which could reach gigabytes on a busy page. Thanks @DGollings! ([#250](https://github.com/sevenseacat/cinder/pull/250))
+* Text filters with `operator: :starts_with` or `:ends_with` now match only the start or end of the value, instead of anywhere in it.
+* Global search no longer repeats the query's existing filters inside every search branch, and a searchable column with an invalid field no longer stops search from narrowing a filtered query. Thanks @Alt-iOS! ([#244](https://github.com/sevenseacat/cinder/pull/244))
+* Typing in an autocomplete filter's search box no longer reloads the collection on every keystroke. Thanks @Alt-iOS! ([#246](https://github.com/sevenseacat/cinder/pull/246))
+* Clearing a date or number filter now also clears a partially typed value, and the filter's × and "Clear all" show while one is typed.
+* Radio group and autocomplete filters on enum fields now list the enum's values when no `options` are given, like select filters already did.
+* Multi-select filters on an array of an enum (or of `one_of` values) now list its values when no `options` are given.
+* Number range filters' `min`, `max` and `step` options now apply to both inputs, where they were ignored.
+* Removed date filters' `format` option, which did nothing: browser date inputs always show dates in the user's locale.
+* Autocomplete filters in a `<:filter>` slot now use their `max_results`, which was ignored.
+* A collection with `on_state_change` but no `url_state` now applies filter and sort changes, which waited for a URL change that never came.
+* A custom filter configured under a built-in filter's name logs its "Cannot override built-in filter type" warning when first used, so it no longer depends on `Cinder.setup/0`.
+* Radio group filters with non-string option values (like enum atoms) now show the chosen option as selected, instead of losing it on the first click.
+* Keyset pagination's "Next page" now works in apps that don't set `config :ash, default_page_type: :keyset`, where it previously reloaded the first page.
+* Keyset pagination's "Next" button reads "Weiter", "Volgende" and "Nästa" in German, Dutch and Swedish, instead of "Next page".
+* Sort keys sent by the client are now ignored unless they're a declared sortable column, so they can no longer create atoms or sort by fields that weren't defined as sortable.
+* Self-closing `<:col field="..." />` columns now render their field's value in table layouts, instead of crashing.
+* Page numbers from the URL are capped at 1,000,000, and multi-select values from the URL or a form are trimmed to the filter's options (or to 100 when it has none), so they can't make a query do unbounded work.
+* Bulk actions only act on selected records that are still in the collection's `query`, and the selection is cleared when the `query` changes.
+* A bulk action that partly fails now fires `on_error` instead of `on_success`.
+* Invalid bulk action events are ignored instead of crashing the collection.
+* Filter values that can't be used, like an invalid date in the URL, are ignored instead of breaking the collection.
+
+### Deprecations
+
+* `Cinder.UrlManager.validate_url_params/1` is deprecated and will be removed in 1.0: Cinder never called it, and URL params are now bounded where they're decoded.
+* `Cinder.QueryBuilder`'s field helpers (`validate_field_existence/2`, `field_exists_on_resource?/2`, `resolve_field_resource/2`, `get_calculation_info/2`, `calculation_sortable?/1`) are deprecated and will be removed in 1.0.
+* `Cinder.Table.table/1`, deprecated since 0.9, now warns at compile time, as do `Cinder.Table`'s `process_columns/2`, `process_filter_slots/2`, `build_query_columns/2` and `process_search_config/2` (use them from `Cinder.Collection`).
+* `Cinder.setup/0` and `Cinder.Filters.Registry.register_filter/2` are deprecated: custom filters need no setup.
+* `Cinder.UrlManager.decode_sort/1`, `Cinder.UrlSync.extract_table_state/1`, `Cinder.Theme.validate/1`, `Cinder.Theme.valid_property?/1` and `Cinder.Messages.gettext_backend/0` are deprecated and will be removed in 1.0.
+* A column with `sort`, `filter` or `search` on a field that can't support it now logs a warning, and will raise in 1.0.
 
 ## v0.17.0 (2026-08-08)
 

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Vince Nibler
+#
+# SPDX-License-Identifier: MIT
+
 if Code.ensure_loaded?(MaestroTool.Lint.Check) do
   defmodule Cinder.Lint.Checks.HandrolledCinderBulk do
     @moduledoc """

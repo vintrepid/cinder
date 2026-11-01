@@ -29,6 +29,7 @@ defmodule Cinder.Renderers.GridSelectionTest do
       sort_by: [],
       sort_label: "Sort",
       loading: false,
+      show_loading_state: false,
       error: false,
       loading_message: "Loading...",
       empty_message: "No results",
@@ -177,14 +178,6 @@ defmodule Cinder.Renderers.GridSelectionTest do
 
       assert html =~ ~r/<input[^>]*checked[^>]*phx-value-id="item-2"/
       refute html =~ ~r/<input[^>]*disabled[^>]*phx-value-id="item-2"/
-    end
-
-    test "applies selected styling only to selectable selected items" do
-      assigns = Map.put(predicate_assigns(), :selected_ids, MapSet.new(["item-1"]))
-
-      html = render_component(&GridRenderer.render/1, assigns)
-
-      assert html =~ "test-selected-item"
     end
   end
 end

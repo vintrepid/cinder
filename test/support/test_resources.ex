@@ -48,8 +48,10 @@ defmodule TestResourceForInference do
     attribute(:created_at, :date)
     attribute(:status_enum, TestStatusEnum)
     attribute(:tags, {:array, TestTagEnum})
+    attribute(:flags, {:array, :boolean})
     attribute(:description, :string)
     attribute(:weapon_type, TestWeaponTypeEnum)
+    attribute(:priority, :atom, constraints: [one_of: [:low, :high]])
     attribute(:profile, TestProfile)
     attribute(:settings, TestSettings)
     attribute(:metadata, :map)
@@ -105,17 +107,6 @@ defmodule TestUserResource do
 end
 
 # Resources for testing relationship filtering
-defmodule TestGenreEnum do
-  @moduledoc false
-  use Ash.Type.Enum,
-    values: [
-      rock: [label: "Rock"],
-      pop: [label: "Pop"],
-      jazz: [label: "Jazz"],
-      classical: [label: "Classical"]
-    ]
-end
-
 defmodule TestRelationshipDomain do
   @moduledoc false
   use Ash.Domain, validate_config_inclusion?: false
@@ -171,7 +162,7 @@ defmodule TestAlbum do
     attribute(:release_date, :date)
     attribute(:price, :decimal)
     attribute(:is_remastered, :boolean)
-    attribute(:genre, TestGenreEnum)
+    attribute(:genre, Music.Genre)
     attribute(:artist_id, :uuid)
   end
 

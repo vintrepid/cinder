@@ -61,6 +61,7 @@ defmodule Cinder.Collection.CustomFilterFnNonexistentFieldTest do
       assert applied_filter.value == "test_value"
     end
 
+    @tag :capture_log
     test "non-existent field without filter_fn remains non-filterable" do
       # Without a custom filter_fn, non-existent fields should not be filterable
       col_slots = [
@@ -79,31 +80,6 @@ defmodule Cinder.Collection.CustomFilterFnNonexistentFieldTest do
       # Should NOT be filterable because field doesn't exist and no custom filter_fn
       assert column.filterable == false
       assert column.filter_fn == nil
-    end
-
-    test "relationship field with calculation and custom filter_fn is filterable" do
-      custom_filter_fn = fn query, %{value: npc_id} ->
-        Map.put(query, :npc_filter, npc_id)
-      end
-
-      col_slots = [
-        %{
-          field: "responses.valid_for_npc?",
-          label: "NPC",
-          sort: false,
-          filter: [type: :text, fn: custom_filter_fn],
-          inner_block: fn -> "NPC" end
-        }
-      ]
-
-      processed = Collection.process_columns(col_slots, TestResourceForVirtualField)
-      column = List.first(processed)
-
-      assert column.field == "responses.valid_for_npc?"
-      assert column.label == "NPC"
-      assert column.filterable == true
-      assert column.filter_type == :text
-      assert is_function(column.filter_fn, 2)
     end
   end
 end

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Themes.Modern do
   @moduledoc """
   A modern, professional theme with clean lines and subtle shadows.
@@ -118,7 +122,7 @@ defmodule Cinder.Themes.Modern do
   set :filter_multicheckboxes_option_class, "flex items-center space-x-3"
 
   set :filter_multicheckboxes_checkbox_class,
-      "h-4 w-4 bg-white border-gray-300 rounded checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-2 cursor-pointer"
+      "h-4 w-4 bg-white border-gray-300 rounded checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-2 cursor-pointer mr-2"
 
   set :filter_multicheckboxes_label_class, "text-sm font-medium text-gray-700 cursor-pointer"
   # Range filters
@@ -145,7 +149,8 @@ defmodule Cinder.Themes.Modern do
   set :page_size_dropdown_class,
       "flex items-center px-3 py-1 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-150 cursor-pointer"
 
-  set :page_size_dropdown_container_class, "bg-white border border-gray-300 rounded shadow-lg"
+  set :page_size_dropdown_container_class,
+      "bg-white border border-gray-300 rounded shadow-lg overflow-hidden"
 
   set :page_size_option_class,
       "w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer"
@@ -203,7 +208,7 @@ defmodule Cinder.Themes.Modern do
 
   # Selection
   set :selection_checkbox_class,
-      "w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+      "h-4 w-4 bg-white border-gray-300 rounded checked:bg-blue-600 checked:border-blue-600 focus:ring-blue-500 focus:ring-2 cursor-pointer"
 
   set :selected_row_class, "bg-blue-50/50"
   set :grid_selection_overlay_class, "mb-2"

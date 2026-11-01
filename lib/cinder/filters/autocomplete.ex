@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filters.Autocomplete do
   @moduledoc """
   Autocomplete filter implementation for Cinder tables.
@@ -8,14 +12,13 @@ defmodule Cinder.Filters.Autocomplete do
 
   ## Options
 
-  - `:options` - List of `{label, value}` tuples (required for static mode)
+  - `:options` - List of `{label, value}` tuples (the enum's values on an enum field)
   - `:placeholder` - Placeholder text for the search input
   - `:max_results` - Maximum number of results to show (default: 10)
 
   ## Examples
 
-      # Static options
-      <:col field={:category_id} label="Category"
+      <:col field="category_id" label="Category"
         filter={[
           type: :autocomplete,
           options: [{"Electronics", 1}, {"Clothing", 2}, {"Books", 3}],
@@ -172,10 +175,13 @@ defmodule Cinder.Filters.Autocomplete do
   end
 
   @impl true
-  def process(raw_value, _column) when is_binary(raw_value) do
+  def process(raw_value, column) when is_binary(raw_value) do
     trimmed = String.trim(raw_value)
+    filter_options = Map.get(column, :filter_options, [])
 
-    if trimmed == "" do
+    # A value from the client that isn't among the options can't be used: no filter
+    if trimmed == "" or
+         not Cinder.Filter.Helpers.client_value_allowed?(trimmed, filter_options) do
       nil
     else
       %{

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filter.Helpers do
   @moduledoc """
   Helper functions for building and validating custom filters.
@@ -25,6 +29,54 @@ defmodule Cinder.Filter.Helpers do
   """
 
   require Logger
+
+  @max_multi_values 100
+
+  @doc false
+  # The values a multi-value filter gets from the client (a URL or a form event), each
+  # of which becomes part of the query, trimmed to what the filter could have offered:
+  # unique, non-empty strings, only those among its options when it has any, and at
+  # most @max_multi_values. Anything else is dropped silently.
+  def client_multi_values(values, filter_options) do
+    allowed = allowed_values(filter_options)
+
+    values
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    |> Enum.uniq()
+    |> Enum.filter(&allowed?(&1, allowed))
+    |> Enum.take(@max_multi_values)
+  end
+
+  @doc false
+  # Whether a single-choice filter's value from the client is one it could have
+  # offered: among its options, when it has any
+  def client_value_allowed?(value, filter_options),
+    do: allowed?(value, allowed_values(filter_options))
+
+  defp allowed_values(filter_options) do
+    filter_options
+    |> Keyword.get(:options, [])
+    |> MapSet.new(fn
+      {_label, value} -> to_string(value)
+      value -> to_string(value)
+    end)
+  end
+
+  defp allowed?(value, allowed), do: MapSet.size(allowed) == 0 or MapSet.member?(allowed, value)
+
+  @doc false
+  # Field names from the app's own declarations (column and filter fields), never
+  # from the client: form params and URLs are matched against declared columns before
+  # they get here. They can't use `String.to_existing_atom`, because keys inside
+  # map-typed fields (`metadata__foo`) and names like `:"artist.name"` may never exist
+  # as compile-time atoms. The set is finite (what the app declares), so it can't
+  # exhaust the atom table. This is the one place Cinder makes such atoms, so the
+  # security checks have one exception.
+  # sobelow_skip ["DOS.StringToAtom"]
+  def declared_field_atom(name) when is_binary(name) do
+    # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+    String.to_atom(name)
+  end
 
   @doc """
   Validates and trims string input, returning error for empty strings.
@@ -250,7 +302,7 @@ defmodule Cinder.Filter.Helpers do
       {:ok, %{type: :text, value: "test", operator: :equals}}
 
       iex> validate_filter_structure(%{type: :text, value: "test"})
-      {:error, :missing_operator}
+      {:error, {:missing_fields, [:operator]}}
 
   """
   def validate_filter_structure(filter) when is_map(filter) do
@@ -309,91 +361,167 @@ defmodule Cinder.Filter.Helpers do
     require Ash.Query
     import Ash.Expr
 
-    result =
-      case parse_field_notation(field) do
-        {:direct, field_name} ->
-          with {:ok, field_atom} <- existing_atom(field_name) do
-            apply_operator_to_field(query, field_atom, value, operator, opts)
-          end
+    case parse_field_notation(field) do
+      {:direct, field_name} ->
+        field_atom = declared_field_atom(field_name)
+        apply_operator_to_field(query, field_atom, value, operator, opts)
 
-        {:relationship, rel_path, field_name} ->
-          with {:ok, field_atom} <- existing_atom(field_name) do
-            rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
+      {:relationship, rel_path, field_name} ->
+        rel_path_atoms = Enum.map(rel_path, &declared_field_atom/1)
+        field_atom = declared_field_atom(field_name)
+        apply_operator_to_relationship(query, rel_path_atoms, field_atom, value, operator, opts)
 
-            apply_operator_to_relationship(
-              query,
-              rel_path_atoms,
-              field_atom,
-              value,
-              operator,
-              opts
-            )
-          end
+      {:embedded, embed_field, field_name} ->
+        embed_atom = declared_field_atom(embed_field)
+        field_atom = declared_field_atom(field_name)
+        apply_operator_to_embedded(query, embed_atom, field_atom, value, operator, opts)
 
-        {:embedded, embed_field, field_name} ->
-          with {:ok, embed_atom} <- existing_atom(embed_field),
-               {:ok, field_atom} <- existing_atom(field_name) do
-            apply_operator_to_embedded(query, embed_atom, field_atom, value, operator, opts)
-          end
+      {:nested_embedded, embed_field, field_path} ->
+        embed_atom = declared_field_atom(embed_field)
+        apply_operator_to_nested_embedded(query, embed_atom, field_path, value, operator, opts)
 
-        {:nested_embedded, embed_field, field_path} ->
-          with {:ok, embed_atom} <- existing_atom(embed_field) do
-            apply_operator_to_nested_embedded(
-              query,
-              embed_atom,
-              field_path,
-              value,
-              operator,
-              opts
-            )
-          end
+      {:relationship_embedded, rel_path, embed_field, field_name} ->
+        rel_path_atoms = Enum.map(rel_path, &declared_field_atom/1)
+        embed_atom = declared_field_atom(embed_field)
+        field_atom = declared_field_atom(field_name)
 
-        {:relationship_embedded, rel_path, embed_field, field_name} ->
-          with {:ok, embed_atom} <- existing_atom(embed_field),
-               {:ok, field_atom} <- existing_atom(field_name) do
-            rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
+        apply_operator_to_relationship_embedded(
+          query,
+          rel_path_atoms,
+          embed_atom,
+          field_atom,
+          value,
+          operator,
+          opts
+        )
 
-            apply_operator_to_relationship_embedded(
-              query,
-              rel_path_atoms,
-              embed_atom,
-              field_atom,
-              value,
-              operator,
-              opts
-            )
-          end
+      {:relationship_nested_embedded, rel_path, embed_field, field_path} ->
+        rel_path_atoms = Enum.map(rel_path, &declared_field_atom/1)
+        embed_atom = declared_field_atom(embed_field)
 
-        {:relationship_nested_embedded, rel_path, embed_field, field_path} ->
-          with {:ok, embed_atom} <- existing_atom(embed_field) do
-            rel_path_atoms = Enum.map(rel_path, &String.to_atom/1)
+        apply_operator_to_relationship_nested_embedded(
+          query,
+          rel_path_atoms,
+          embed_atom,
+          field_path,
+          value,
+          operator,
+          opts
+        )
 
-            apply_operator_to_relationship_nested_embedded(
-              query,
-              rel_path_atoms,
-              embed_atom,
-              field_path,
-              value,
-              operator,
-              opts
-            )
-          end
-
-        {:invalid, _} ->
-          # Return query unchanged for invalid field notation
-          query
-      end
-
-    case result do
-      {:error, :unknown_field} -> query
-      other -> other
+      {:invalid, _} ->
+        # Return query unchanged for invalid field notation
+        query
     end
   end
 
-  defp existing_atom(value) do
-    {:ok, String.to_existing_atom(value)}
-  rescue
-    ArgumentError -> {:error, :unknown_field}
+  # Filters a field to a range. Each bound is `nil` (open), a `Date` (that whole day is in
+  # the range), or any other value (a number, a datetime), compared as given.
+  #
+  # Both bounds go in one condition, so through a to-many relationship one related record
+  # has to be in the range, not one above the lower bound and another below the upper.
+  #
+  # A date compares the field against midnights as a half-open range (`>= d 00:00`,
+  # `< d+1 00:00`), rather than casting the field to a date, so a plain index on the column
+  # still works. Ash casts the `NaiveDateTime` midnights to the field's own type (a `Date`
+  # for a date field), so nothing needs to know it.
+  @doc false
+  def build_range_filter(query, field, from, to) do
+    require Ash.Query
+    import Ash.Expr
+
+    with {rel_path, value} <- range_field(field),
+         condition when not is_nil(condition) <- range_condition(value, from, to) do
+      case rel_path do
+        [] -> Ash.Query.filter(query, ^condition)
+        rel_path -> Ash.Query.filter(query, exists(^rel_path, ^condition))
+      end
+    else
+      _ -> query
+    end
+  end
+
+  defp range_condition(value, from, to) do
+    import Ash.Expr
+
+    case {lower(value, from), upper(value, to)} do
+      {nil, nil} -> nil
+      {lower, nil} -> lower
+      {nil, upper} -> upper
+      {lower, upper} -> expr(^lower and ^upper)
+    end
+  end
+
+  # The relationship path to the field, and the field: `{:field, ref}`, or `{:embedded, path}`
+  # for a value inside an embedded attribute, which Ash can't type, so a `Date` bound is
+  # compared by casting it instead
+  defp range_field(field) do
+    import Ash.Expr
+
+    case parse_field_notation(field) do
+      {:direct, name} ->
+        {[], {:field, expr(^ref(declared_field_atom(name)))}}
+
+      {:relationship, rel_path, name} ->
+        {Enum.map(rel_path, &declared_field_atom/1),
+         {:field, expr(^ref(declared_field_atom(name)))}}
+
+      {:embedded, embed, name} ->
+        {[], embedded_value(embed, [name])}
+
+      {:nested_embedded, embed, path} ->
+        {[], embedded_value(embed, path)}
+
+      {:relationship_embedded, rel_path, embed, name} ->
+        {Enum.map(rel_path, &declared_field_atom/1), embedded_value(embed, [name])}
+
+      {:relationship_nested_embedded, rel_path, embed, path} ->
+        {Enum.map(rel_path, &declared_field_atom/1), embedded_value(embed, path)}
+
+      {:invalid, _} ->
+        :invalid
+    end
+  end
+
+  defp embedded_value(embed, path) do
+    import Ash.Expr
+
+    path = Enum.map(path, &declared_field_atom/1)
+    {:embedded, expr(get_path(^ref(declared_field_atom(embed)), ^path))}
+  end
+
+  defp lower(_value, nil), do: nil
+
+  defp lower({:embedded, value}, %Date{} = date) do
+    import Ash.Expr
+    expr(type(^value, :date) >= ^date)
+  end
+
+  defp lower({_kind, value}, %Date{} = date) do
+    import Ash.Expr
+    expr(^value >= ^NaiveDateTime.new!(date, ~T[00:00:00]))
+  end
+
+  defp lower({_kind, value}, bound) do
+    import Ash.Expr
+    expr(^value >= ^bound)
+  end
+
+  defp upper(_value, nil), do: nil
+
+  defp upper({:embedded, value}, %Date{} = date) do
+    import Ash.Expr
+    expr(type(^value, :date) <= ^date)
+  end
+
+  defp upper({_kind, value}, %Date{} = date) do
+    import Ash.Expr
+    expr(^value < ^NaiveDateTime.new!(Date.add(date, 1), ~T[00:00:00]))
+  end
+
+  defp upper({_kind, value}, bound) do
+    import Ash.Expr
+    expr(^value <= ^bound)
   end
 
   defp apply_operator_to_relationship(query, rel_path, field_atom, value, operator, opts) do
@@ -413,13 +541,13 @@ defmodule Cinder.Filter.Helpers do
       :starts_with ->
         Ash.Query.filter(
           query,
-          exists(^rel_path, contains(type(^ref(field_atom), :string), ^value))
+          exists(^rel_path, string_starts_with(type(^ref(field_atom), :string), ^value))
         )
 
       :ends_with ->
         Ash.Query.filter(
           query,
-          exists(^rel_path, contains(type(^ref(field_atom), :string), ^value))
+          exists(^rel_path, string_ends_with(type(^ref(field_atom), :string), ^value))
         )
 
       :greater_than ->
@@ -434,38 +562,28 @@ defmodule Cinder.Filter.Helpers do
       :less_than_or_equal ->
         Ash.Query.filter(query, exists(^rel_path, ^ref(field_atom) <= ^value))
 
+      :in when value == [] ->
+        query
+
       :in when is_list(value) ->
-        match_mode = Keyword.get(opts, :match_mode, :any)
+        # Each value is matched by a related record: `value in field` on an array field,
+        # `field == value` otherwise
+        matches =
+          case get_field_type(query.resource, rel_path ++ [field_atom]) do
+            {:array, _type} -> fn val -> expr(^val in ^ref(field_atom)) end
+            _other -> fn val -> expr(^ref(field_atom) == ^val) end
+          end
 
-        case value do
-          [] ->
-            query
+        case Keyword.get(opts, :match_mode, :any) do
+          # Every value matched, by any related records between them
+          :all ->
+            Enum.reduce(value, query, fn val, query ->
+              Ash.Query.filter(query, exists(^rel_path, ^matches.(val)))
+            end)
 
-          [single_value] ->
-            # Single value: same for both modes
-            Ash.Query.filter(query, exists(^rel_path, ^ref(field_atom) == ^single_value))
-
-          multiple_values ->
-            case match_mode do
-              :all ->
-                # ALL mode: must have a related record matching each value
-                # exists(rel, field == val1) AND exists(rel, field == val2) AND ...
-                conditions =
-                  Enum.map(multiple_values, fn val ->
-                    expr(exists(^rel_path, ^ref(field_atom) == ^val))
-                  end)
-
-                combined =
-                  Enum.reduce(conditions, fn condition, acc ->
-                    expr(^acc and ^condition)
-                  end)
-
-                Ash.Query.filter(query, ^combined)
-
-              _ ->
-                # ANY mode (default): exists with IN operator
-                Ash.Query.filter(query, exists(^rel_path, ^ref(field_atom) in ^multiple_values))
-            end
+          _any ->
+            condition = value |> Enum.map(matches) |> Enum.reduce(&expr(^&2 or ^&1))
+            Ash.Query.filter(query, exists(^rel_path, ^condition))
         end
 
       _ ->
@@ -522,10 +640,10 @@ defmodule Cinder.Filter.Helpers do
         Ash.Query.filter(query, contains(type(^ref(field_atom), :string), ^value))
 
       :starts_with ->
-        Ash.Query.filter(query, contains(type(^ref(field_atom), :string), ^value))
+        Ash.Query.filter(query, string_starts_with(type(^ref(field_atom), :string), ^value))
 
       :ends_with ->
-        Ash.Query.filter(query, contains(type(^ref(field_atom), :string), ^value))
+        Ash.Query.filter(query, string_ends_with(type(^ref(field_atom), :string), ^value))
 
       :greater_than ->
         if is_nil(value) do
@@ -619,12 +737,17 @@ defmodule Cinder.Filter.Helpers do
   end
 
   # Helper function to get field type information
-  defp get_field_type(resource, field_atom) do
-    case Ash.Resource.Info.attribute(resource, field_atom) do
-      %{type: field_type} -> field_type
-      nil -> :unknown
+  # Any field's type, not only an attribute's: `list` aggregates and array calculations are
+  # arrays too. A relationship path's field is resolved on the related resource.
+  defp get_field_type(resource, field) do
+    case Cinder.Field.resolve(resource, field_path_string(field)) do
+      {:ok, resolved} -> Cinder.Field.type(resolved) || :unknown
+      :error -> :unknown
     end
   end
+
+  defp field_path_string(path) when is_list(path), do: Enum.map_join(path, ".", &to_string/1)
+  defp field_path_string(field), do: to_string(field)
 
   @doc """
   Common empty value check for most filter types.
@@ -694,14 +817,14 @@ defmodule Cinder.Filter.Helpers do
       debug_filter("MyFilter", "processing input", %{input: "test"})
 
   """
-  def debug_filter(filter_name, _message, _data \\ %{}) do
+  def debug_filter(filter_name, message, data \\ %{}) do
     if Application.get_env(:cinder, :debug_filters, false) do
       require Logger
 
-      Logger.debug("Cinder filter debug checkpoint reached.",
-        event: "cinder.filter.debug_checkpoint",
-        component: Cinder.Observability.stable_token(filter_name)
-      )
+      Logger.debug("""
+      [Cinder.Filter.Debug] #{filter_name}: #{message}
+      Data: #{inspect(data, pretty: true)}
+      """)
     end
   end
 
@@ -710,11 +833,13 @@ defmodule Cinder.Filter.Helpers do
 
   ## Examples
 
-      iex> validate_filter_implementation(MyApp.Filters.ValidFilter)
+      iex> validate_filter_implementation(Cinder.Filters.Text)
       {:ok, "Filter implementation is valid"}
 
-      iex> validate_filter_implementation(InvalidModule)
-      {:error, ["Missing callback: render/4", "Missing callback: process/2"]}
+  A module missing callbacks lists them:
+
+      validate_filter_implementation(MyApp.Filters.Unfinished)
+      #=> {:error, ["Missing callback: render/4", "Missing callback: process/2"]}
 
   """
   def validate_filter_implementation(module) when is_atom(module) do
@@ -812,9 +937,9 @@ defmodule Cinder.Filter.Helpers do
         :persistent_term.put(key, true)
 
         Logger.warning(
-          "Cinder embedded field uses deprecated bracket notation; use double-underscore notation instead. Bracket notation will be removed in Cinder 1.0.",
-          event: "cinder.filter.deprecated_bracket_notation",
-          reason_code: "deprecated_field_notation"
+          "Embedded field #{inspect(field)} uses deprecated bracket notation. " <>
+            "Use double-underscore notation instead (e.g. \"profile__first_name\"). " <>
+            "Bracket notation will be removed in Cinder 1.0."
         )
       end
     end
@@ -939,10 +1064,16 @@ defmodule Cinder.Filter.Helpers do
         Ash.Query.filter(query, contains(get_path(^ref(embed_atom), [^field_atom]), ^value))
 
       :starts_with ->
-        Ash.Query.filter(query, contains(get_path(^ref(embed_atom), [^field_atom]), ^value))
+        Ash.Query.filter(
+          query,
+          string_starts_with(get_path(^ref(embed_atom), [^field_atom]), ^value)
+        )
 
       :ends_with ->
-        Ash.Query.filter(query, contains(get_path(^ref(embed_atom), [^field_atom]), ^value))
+        Ash.Query.filter(
+          query,
+          string_ends_with(get_path(^ref(embed_atom), [^field_atom]), ^value)
+        )
 
       :greater_than ->
         Ash.Query.filter(query, get_path(^ref(embed_atom), [^field_atom]) > ^value)
@@ -977,7 +1108,7 @@ defmodule Cinder.Filter.Helpers do
     import Ash.Expr
 
     # Convert field path to atoms for get_path
-    field_atoms = Enum.map(field_path, &String.to_atom/1)
+    field_atoms = Enum.map(field_path, &declared_field_atom/1)
 
     case operator do
       :equals ->
@@ -987,10 +1118,16 @@ defmodule Cinder.Filter.Helpers do
         Ash.Query.filter(query, contains(get_path(^ref(embed_atom), ^field_atoms), ^value))
 
       :starts_with ->
-        Ash.Query.filter(query, contains(get_path(^ref(embed_atom), ^field_atoms), ^value))
+        Ash.Query.filter(
+          query,
+          string_starts_with(get_path(^ref(embed_atom), ^field_atoms), ^value)
+        )
 
       :ends_with ->
-        Ash.Query.filter(query, contains(get_path(^ref(embed_atom), ^field_atoms), ^value))
+        Ash.Query.filter(
+          query,
+          string_ends_with(get_path(^ref(embed_atom), ^field_atoms), ^value)
+        )
 
       :greater_than ->
         Ash.Query.filter(query, get_path(^ref(embed_atom), ^field_atoms) > ^value)
@@ -1041,13 +1178,13 @@ defmodule Cinder.Filter.Helpers do
       :starts_with ->
         Ash.Query.filter(
           query,
-          exists(^rel_path, contains(get_path(^ref(embed_atom), [^field_atom]), ^value))
+          exists(^rel_path, string_starts_with(get_path(^ref(embed_atom), [^field_atom]), ^value))
         )
 
       :ends_with ->
         Ash.Query.filter(
           query,
-          exists(^rel_path, contains(get_path(^ref(embed_atom), [^field_atom]), ^value))
+          exists(^rel_path, string_ends_with(get_path(^ref(embed_atom), [^field_atom]), ^value))
         )
 
       :greater_than ->
@@ -1099,7 +1236,7 @@ defmodule Cinder.Filter.Helpers do
     import Ash.Expr
 
     # Convert field path to atoms for get_path
-    field_atoms = Enum.map(field_path, &String.to_atom/1)
+    field_atoms = Enum.map(field_path, &declared_field_atom/1)
 
     case operator do
       :equals ->
@@ -1117,13 +1254,13 @@ defmodule Cinder.Filter.Helpers do
       :starts_with ->
         Ash.Query.filter(
           query,
-          exists(^rel_path, contains(get_path(^ref(embed_atom), ^field_atoms), ^value))
+          exists(^rel_path, string_starts_with(get_path(^ref(embed_atom), ^field_atoms), ^value))
         )
 
       :ends_with ->
         Ash.Query.filter(
           query,
-          exists(^rel_path, contains(get_path(^ref(embed_atom), ^field_atoms), ^value))
+          exists(^rel_path, string_ends_with(get_path(^ref(embed_atom), ^field_atoms), ^value))
         )
 
       :greater_than ->
@@ -1242,11 +1379,11 @@ defmodule Cinder.Filter.Helpers do
 
   ## Examples
 
-      iex> validate_embedded_field_syntax("profile[:first_name]")
+      iex> validate_embedded_field_syntax("profile__first_name")
       :ok
 
-      iex> validate_embedded_field_syntax("profile[invalid]")
-      {:error, "Invalid embedded field syntax: missing colon"}
+      iex> validate_embedded_field_syntax("profile__")
+      {:error, "Invalid field syntax"}
 
   """
   def validate_embedded_field_syntax(field) when is_binary(field) do

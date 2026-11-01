@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filters.RadioGroup do
   @moduledoc """
   Radio group filter implementation for Cinder tables.
@@ -45,8 +49,8 @@ defmodule Cinder.Filters.RadioGroup do
         :for={{label, value} <- @options}
         name={field_name(@column.field)}
         label={label}
-        value={value}
-        checked={@current_radio_value == value}
+        value={to_string(value)}
+        checked={@current_radio_value == to_string(value)}
         theme={@theme}
       />
     </div>
@@ -90,10 +94,13 @@ defmodule Cinder.Filters.RadioGroup do
   defp value_key(value), do: sanitized_field_name(to_string(value))
 
   @impl true
-  def process(raw_value, _column) when is_binary(raw_value) do
+  def process(raw_value, column) when is_binary(raw_value) do
     trimmed = String.trim(raw_value)
+    filter_options = Map.get(column, :filter_options, [])
 
-    if trimmed == "" do
+    # A value from the client that isn't among the options can't be used: no filter
+    if trimmed == "" or
+         not Cinder.Filter.Helpers.client_value_allowed?(trimmed, filter_options) do
       nil
     else
       %{

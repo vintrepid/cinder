@@ -33,18 +33,41 @@ defmodule Cinder.BulkActionExecutorTest do
   end
 
   describe "build_query/3" do
-    test "builds a query filtered by id", %{ids: ids} do
+    test "builds a query for exactly the given ids", %{ids: ids} do
       query = BulkActionExecutor.build_query(SearchTestResource, ids)
 
-      assert %Ash.Query{} = query
-      assert query.resource == SearchTestResource
+      assert query |> Ash.read!() |> MapSet.new(& &1.id) == MapSet.new(ids)
     end
 
-    test "supports custom id_field", %{ids: ids} do
-      query = BulkActionExecutor.build_query(SearchTestResource, ids, :id)
+    test "matches on a custom id_field", %{record1: record1, record3: record3} do
+      query =
+        BulkActionExecutor.build_query(SearchTestResource, ["Record 1", "Record 3"], :title)
 
-      assert %Ash.Query{} = query
+      assert query |> Ash.read!() |> MapSet.new(& &1.id) == MapSet.new([record1.id, record3.id])
     end
+  end
+
+  describe "a base query instead of a resource" do
+    test "bounds the action to its own records, whatever ids are given", %{
+      ids: ids,
+      record1: record1,
+      record2: record2
+    } do
+      require Ash.Query
+      base = Ash.Query.filter(SearchTestResource, title != "Record 2")
+
+      assert {:ok, %Ash.BulkResult{status: :success}} =
+               BulkActionExecutor.execute(:archive, resource: base, ids: ids)
+
+      assert Ash.get!(SearchTestResource, record1.id).status == "archived"
+      assert Ash.get!(SearchTestResource, record2.id).status == "active"
+    end
+  end
+
+  test "normalize_result/1 keeps a partial success apart from success" do
+    bulk = %Ash.BulkResult{status: :partial_success, errors: [:oops], error_count: 1}
+
+    assert BulkActionExecutor.normalize_result(bulk) == {:partial_success, bulk}
   end
 
   describe "execute/2 with atom action" do

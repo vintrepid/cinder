@@ -2,6 +2,7 @@ defmodule Cinder.FilterManagerRuntimeTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
   import Phoenix.LiveViewTest
+  import Cinder.TestHelpers, only: [put_app_env: 2]
 
   alias Cinder.FilterManager
   alias Cinder.Filters.Registry
@@ -101,9 +102,8 @@ defmodule Cinder.FilterManagerRuntimeTest do
   end
 
   setup do
-    # Clear any existing filters before each test
-    Application.put_env(:cinder, :filters, [])
-    :ok
+    # Start every test with no custom filters registered
+    put_app_env(:filters, [])
   end
 
   describe "filter_input/1 with custom filters" do
@@ -332,21 +332,6 @@ defmodule Cinder.FilterManagerRuntimeTest do
       assert log_output =~ "Cinder custom filter module is unavailable; using the text filter"
       refute log_output =~ "price"
     end
-
-    test "infers built-in filters normally" do
-      slot = %{
-        filterable: true,
-        filter_options: []
-      }
-
-      # Mock Ash resource attribute
-      resource = nil
-
-      config = FilterManager.infer_filter_config("name", resource, slot)
-
-      assert config.filter_type == :text
-      assert is_list(config.filter_options)
-    end
   end
 
   describe "validate_runtime_filters/0" do
@@ -400,37 +385,6 @@ defmodule Cinder.FilterManagerRuntimeTest do
   end
 
   describe "integration with built-in filter system" do
-    test "custom filters work alongside built-in filters" do
-      Application.put_env(:cinder, :filters, slider: TestSliderFilter)
-      Registry.register_config_filters()
-
-      # Test both custom and built-in filters
-      custom_column = %{
-        field: "price",
-        filter_type: :slider,
-        filter_options: []
-      }
-
-      builtin_column = %{
-        field: "name",
-        filter_type: :text,
-        filter_options: []
-      }
-
-      # Both should process correctly
-      custom_result = FilterManager.process_filter_value("50", custom_column)
-      builtin_result = FilterManager.process_filter_value("test", builtin_column)
-
-      assert custom_result == %{type: :slider, value: 50, operator: :equals}
-
-      assert builtin_result == %{
-               type: :text,
-               value: "test",
-               operator: :contains,
-               case_sensitive: false
-             }
-    end
-
     test "default_options works for both custom and built-in filters" do
       Application.put_env(:cinder, :filters, slider: TestSliderFilter)
       Registry.register_config_filters()
@@ -565,29 +519,56 @@ defmodule Cinder.FilterManagerRuntimeTest do
 
       assert result == expected
     end
+  end
 
-    test "enum_to_options handles mixed atom and string values correctly" do
-      # Test the exact case from the GitHub issue
-      defmodule TestMixedEnum do
-        use Ash.Type.Enum, values: [:pending, :trading, :paused, "Test"]
+  describe "infer_filter_config/3 enum options" do
+    @genre_options [{"Rock", :rock}, {"Pop", :pop}, {"Jazz", :jazz}, {"Classical", :classical}]
+
+    for filter_type <- [:select, :multi_select, :multi_checkboxes, :radio_group, :autocomplete] do
+      test "#{filter_type} gets options from an enum attribute" do
+        slot = %{filterable: true, filter_type: unquote(filter_type), filter_options: []}
+
+        config = FilterManager.infer_filter_config("genre", Music.Album, slot)
+
+        assert config.filter_options[:options] == @genre_options
       end
+    end
 
-      mock_attribute = %{
-        type: TestMixedEnum,
-        constraints: []
+    test "explicit options win over the enum's" do
+      slot = %{
+        filterable: true,
+        filter_type: :radio_group,
+        filter_options: [options: [{"Just rock", :rock}]]
       }
 
-      result = FilterManager.extract_enum_options(mock_attribute)
+      config = FilterManager.infer_filter_config("genre", Music.Album, slot)
 
-      # Atoms should be humanized, strings should be capitalized
-      expected = [
-        {"Pending", :pending},
-        {"Trading", :trading},
-        {"Paused", :paused},
-        {"Test", "Test"}
-      ]
+      assert config.filter_options[:options] == [{"Just rock", :rock}]
+    end
 
-      assert result == expected
+    test "an array of an enum gets the enum's options" do
+      slot = %{filterable: true, filter_options: []}
+
+      config = FilterManager.infer_filter_config("tags", TestResourceForInference, slot)
+
+      assert config.filter_type == :multi_select
+      assert Enum.map(config.filter_options[:options], &elem(&1, 1)) == [:tag1, :tag2, :tag3]
+    end
+
+    test "an atom constrained to one_of infers a select with those options" do
+      slot = %{filterable: true, filter_options: []}
+
+      config = FilterManager.infer_filter_config("priority", TestResourceForInference, slot)
+
+      assert config.filter_type == :select
+      assert config.filter_options[:options] == [{"Low", :low}, {"High", :high}]
+    end
+
+    test "an array constrained to one_of gets those options" do
+      attribute = %{type: {:array, :atom}, constraints: [items: [one_of: [:draft, :published]]]}
+
+      assert FilterManager.extract_enum_options(attribute) ==
+               [{"Draft", :draft}, {"Published", :published}]
     end
   end
 
@@ -810,5 +791,57 @@ defmodule Cinder.FilterManagerRuntimeTest do
       assert html =~ ">Name</label>"
       refute html =~ "Name:"
     end
+  end
+
+  # Field names here come from columns, but are only matched against existing atoms:
+  # a name that isn't one can't be a field, and nothing should create one
+  describe "inferring a filter for a field name that isn't an atom" do
+    test "infers nothing, in any notation, and creates no atom" do
+      for notation <- [
+            &Function.identity/1,
+            &(&1 <> ".name"),
+            &("artist." <> &1),
+            &(&1 <> "__label"),
+            &("details__" <> &1)
+          ] do
+        name = "cinder_bogus_#{System.unique_integer([:positive])}"
+        field = notation.(name)
+
+        config = FilterManager.infer_filter_config(field, Music.Album, %{filterable: true})
+
+        assert config.filter_type == :text, field
+        assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+      end
+    end
+
+    test "still infers real fields in every notation" do
+      for {field, type} <- [
+            {"genre", :select},
+            {"artist.name", :text},
+            {"details__catalog_number", :text},
+            {"is_remastered", :boolean}
+          ] do
+        assert FilterManager.infer_filter_config(field, Music.Album, %{filterable: true}).filter_type ==
+                 type,
+               field
+      end
+    end
+  end
+
+  # Regression: a form event could post any number of multi-select values, each one
+  # part of the query, just as a URL could
+  test "params_to_filters/2 trims a form's multi-select values to the filter's options" do
+    columns = [
+      %{
+        field: "tags",
+        filterable: true,
+        filter_type: :multi_checkboxes,
+        filter_options: [options: [{"A", "a"}, {"B", "b"}]]
+      }
+    ]
+
+    params = %{"tags" => ["b", "a", "b"] ++ Enum.map(1..1000, &"junk#{&1}")}
+
+    assert %{"tags" => %{value: ["b", "a"]}} = FilterManager.params_to_filters(params, columns)
   end
 end

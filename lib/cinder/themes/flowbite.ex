@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Themes.Flowbite do
   @moduledoc """
   A Flowbite-compatible theme following Flowbite design system.
@@ -105,7 +109,7 @@ defmodule Cinder.Themes.Flowbite do
   set :filter_radio_group_option_class, "flex items-center"
 
   set :filter_radio_group_radio_class,
-      "w-4 h-4 text-neutral-primary border border-default-medium bg-neutral-secondary-medium rounded-full checked:border-brand focus:ring-2 focus:outline-none focus:ring-brand-subtle appearance-none"
+      "w-4 h-4 text-neutral-primary border border-default-medium bg-neutral-secondary-medium rounded-full checked:border-brand focus:ring-2 focus:outline-none focus:ring-brand-subtle"
 
   set :filter_radio_group_label_class,
       "ml-2 text-sm font-medium text-gray-900 dark:text-gray-300 cursor-pointer"
@@ -114,7 +118,7 @@ defmodule Cinder.Themes.Flowbite do
   set :filter_checkbox_container_class, "flex items-center min-h-[42px]"
 
   set :filter_checkbox_input_class,
-      "w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft appearance-none"
+      "w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft"
 
   set :filter_checkbox_label_class,
       "ml-2 text-sm font-medium text-gray-900 dark:text-gray-300 cursor-pointer"
@@ -129,7 +133,7 @@ defmodule Cinder.Themes.Flowbite do
       "flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
 
   set :filter_multiselect_checkbox_class,
-      "w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft appearance-none mr-2"
+      "w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft mr-2"
 
   set :filter_multiselect_label_class,
       "ml-2 text-sm font-medium text-gray-900 dark:text-white cursor-pointer select-none flex-1"
@@ -142,7 +146,7 @@ defmodule Cinder.Themes.Flowbite do
   set :filter_multicheckboxes_option_class, "flex items-center"
 
   set :filter_multicheckboxes_checkbox_class,
-      "w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft appearance-none"
+      "w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft"
 
   set :filter_multicheckboxes_label_class,
       "ml-2 text-sm font-medium text-gray-900 dark:text-gray-300 cursor-pointer"
@@ -178,7 +182,7 @@ defmodule Cinder.Themes.Flowbite do
       "flex items-center px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:bg-gray-700 dark:hover:text-white cursor-pointer"
 
   set :page_size_dropdown_container_class,
-      "bg-white border border-gray-200 rounded-lg shadow-lg dark:bg-gray-800 dark:border-gray-700"
+      "bg-white border border-gray-200 rounded-lg shadow-lg dark:bg-gray-800 dark:border-gray-700 overflow-hidden"
 
   set :page_size_option_class,
       "w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-600 cursor-pointer"
@@ -244,7 +248,7 @@ defmodule Cinder.Themes.Flowbite do
 
   # Selection
   set :selection_checkbox_class,
-      "w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:bg-gray-700 dark:border-gray-600"
+      "w-4 h-4 border border-default-medium rounded-xs bg-neutral-secondary-medium focus:ring-2 focus:ring-brand-soft"
 
   set :selected_row_class, "bg-blue-50 dark:bg-blue-900/20"
   set :grid_selection_overlay_class, "mb-2"

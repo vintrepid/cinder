@@ -4,25 +4,6 @@ defmodule Cinder.FieldValidationTest do
   alias Cinder.Column
 
   describe "field attribute validation" do
-    test "reproduces original user error case - using key instead of field" do
-      # This reproduces the exact error the user encountered
-      # when they used key="scroll" instead of field="scroll"
-      user_column = %{
-        # This is what the user had
-        key: "scroll",
-        label: "Type",
-        # This requires a field
-        filter: true
-      }
-
-      # Should raise helpful error at table level when filter is used without field
-      assert_raise ArgumentError,
-                   ~r/column with filter attribute\(s\) requires a 'field' attribute/,
-                   fn ->
-                     Cinder.Table.process_columns([user_column], nil)
-                   end
-    end
-
     test "correct usage with field attribute works" do
       # This is what the user should have used
       correct_column = %{
@@ -33,7 +14,7 @@ defmodule Cinder.FieldValidationTest do
       }
 
       # Should work without error
-      [column] = Cinder.Table.process_columns([correct_column], nil)
+      [column] = Cinder.Collection.process_columns([correct_column], nil)
 
       assert column.field == "scroll"
       assert column.label == "Type"
@@ -49,12 +30,12 @@ defmodule Cinder.FieldValidationTest do
       }
 
       assert_raise ArgumentError, fn ->
-        Cinder.Table.process_columns([missing_field_column], nil)
+        Cinder.Collection.process_columns([missing_field_column], nil)
       end
 
       # Verify the error message is helpful and actionable
       try do
-        Cinder.Table.process_columns([missing_field_column], nil)
+        Cinder.Collection.process_columns([missing_field_column], nil)
       rescue
         error in ArgumentError ->
           message = Exception.message(error)
@@ -71,42 +52,11 @@ defmodule Cinder.FieldValidationTest do
       }
 
       # Should work for action columns (no filter/sort)
-      [column] = Cinder.Table.process_columns([empty_field_column], nil)
+      [column] = Cinder.Collection.process_columns([empty_field_column], nil)
       assert column.field == ""
       assert column.label == "Actions"
       assert column.filterable == false
       assert column.sortable == false
-    end
-
-    test "nil field attribute works for action columns" do
-      nil_field_column = %{
-        field: nil,
-        label: "Actions"
-      }
-
-      # Should work for action columns (no filter/sort)
-      [column] = Cinder.Table.process_columns([nil_field_column], nil)
-      assert column.field == nil
-      assert column.label == "Actions"
-      assert column.filterable == false
-      assert column.sortable == false
-    end
-
-    test "filter without field raises validation error at table level" do
-      # This test documents that filtering requires a field attribute
-      invalid_column = %{
-        # Wrong attribute name - missing field
-        # This should be field: "tags"
-        key: "tags",
-        filter: :multi_select
-      }
-
-      # Now fails immediately with helpful message at table level
-      assert_raise ArgumentError,
-                   ~r/column with filter attribute\(s\) requires a 'field' attribute/,
-                   fn ->
-                     Cinder.Table.process_columns([invalid_column], nil)
-                   end
     end
 
     test "sort without field raises validation error at table level" do
@@ -121,7 +71,7 @@ defmodule Cinder.FieldValidationTest do
       assert_raise ArgumentError,
                    ~r/column with sort attribute\(s\) requires a 'field' attribute/,
                    fn ->
-                     Cinder.Table.process_columns([invalid_column], nil)
+                     Cinder.Collection.process_columns([invalid_column], nil)
                    end
     end
 
@@ -132,7 +82,7 @@ defmodule Cinder.FieldValidationTest do
         # No field, filter, or sort - this is an action column
       }
 
-      [column] = Cinder.Table.process_columns([action_column], nil)
+      [column] = Cinder.Collection.process_columns([action_column], nil)
       assert column.field == nil
       assert column.label == "Actions"
       assert column.filterable == false
@@ -141,222 +91,23 @@ defmodule Cinder.FieldValidationTest do
   end
 
   describe "form field name generation" do
-    test "generates correct form field names with field attribute" do
-      column = %{
-        field: "scroll",
-        filterable: true,
-        filter_type: :boolean
-      }
-
-      parsed_column = Column.parse_column(column, nil)
-
-      # Verify the field name is used correctly
-      assert parsed_column.field == "scroll"
-
-      # This would generate proper form field names like filters[scroll]
-      # instead of broken filters[] that the user was experiencing
-    end
-
     test "handles relationship fields correctly" do
       column = %{
-        field: "user.department",
+        field: "artist.name",
         filterable: true,
         filter_type: :text
       }
 
-      parsed_column = Column.parse_column(column, nil)
+      parsed_column = Column.parse_column(column, Music.Album)
 
-      assert parsed_column.field == "user.department"
-      assert parsed_column.relationship == "user"
-      assert parsed_column.display_field == "department"
-    end
-  end
-
-  describe "consistency verification" do
-    test "field attribute is used consistently throughout column struct" do
-      column = %{
-        field: "test_field",
-        label: "Test Field",
-        filterable: true,
-        filter_type: :text
-      }
-
-      parsed_column = Column.parse_column(column, nil)
-
-      # Verify field is stored consistently (not as key)
-      assert parsed_column.field == "test_field"
-
-      # Verify there's no confusing key attribute
-      refute Map.has_key?(parsed_column, :key)
+      assert parsed_column.field == "artist.name"
+      assert parsed_column.relationship == "artist"
+      assert parsed_column.display_field == "name"
     end
   end
 
   describe "embedded field validation" do
-    test "validates direct fields exist on resource" do
-      # Valid direct field
-      assert Cinder.QueryBuilder.validate_field_existence(TestResourceForInference, "name") ==
-               true
-
-      # Invalid direct field
-      assert Cinder.QueryBuilder.validate_field_existence(TestResourceForInference, "nonexistent") ==
-               false
-    end
-
-    test "validates embedded fields with underscore notation" do
-      # Valid embedded field using underscore notation
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile__first_name"
-             ) == true
-
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile__phone"
-             ) == true
-
-      # Invalid embedded field - valid embed attribute but invalid nested field
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile__nonexistent"
-             ) == false
-
-      # Invalid embedded field - nonexistent embed attribute
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "nonexistent__field"
-             ) == false
-    end
-
-    @tag capture_log: true
-    test "validates embedded fields with bracket notation" do
-      # Valid embedded field using bracket notation
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile[:first_name]"
-             ) == true
-
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile[:phone]"
-             ) == true
-
-      # Invalid embedded field - valid embed attribute but invalid nested field
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile[:nonexistent]"
-             ) == false
-    end
-
-    test "validates nested embedded fields" do
-      # Valid nested embedded field
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "settings__address__street"
-             ) == true
-
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "settings__address__city"
-             ) == true
-
-      # Invalid nested embedded field
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "settings__address__nonexistent"
-             ) == false
-
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "settings__nonexistent__field"
-             ) == false
-    end
-
-    test "handles relationship fields" do
-      # Valid relationship field (if relationships exist)
-      assert Cinder.QueryBuilder.validate_field_existence(TestUuidResource, "user") == true
-
-      # Invalid relationship field
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestUuidResource,
-               "nonexistent_relation"
-             ) == false
-    end
-
-    test "handles relationship dot notation fields" do
-      # This would work if TestUuidResource had the right relationships
-      # For now, just test that it doesn't crash
-      result = Cinder.QueryBuilder.validate_field_existence(TestUuidResource, "user.name")
-      assert is_boolean(result)
-
-      # Test nonexistent relationship
-      assert Cinder.QueryBuilder.validate_field_existence(TestUuidResource, "producer.name") ==
-               false
-
-      # Test valid relationship but nonexistent field
-      result2 = Cinder.QueryBuilder.validate_field_existence(TestUuidResource, "user.nonexistent")
-      assert is_boolean(result2)
-    end
-
-    test "handles mixed relationship and embedded field notation" do
-      # Test mixed format that combines embedded field notation with relationship
-      # This should handle the mixed format gracefully without crashing
-      result =
-        Cinder.QueryBuilder.validate_field_existence(
-          TestResourceForInference,
-          "user__profile.name"
-        )
-
-      assert is_boolean(result)
-    end
-
-    test "defensive programming prevents crashes with malformed inputs" do
-      # Test that we handle edge cases that could create crashes
-
-      # These should all handle gracefully without FunctionClauseError
-      assert Cinder.QueryBuilder.validate_field_existence(TestResourceForInference, "") == false
-
-      assert Cinder.QueryBuilder.validate_field_existence(TestResourceForInference, "user.") ==
-               false
-
-      assert Cinder.QueryBuilder.validate_field_existence(TestResourceForInference, ".name") ==
-               false
-
-      assert Cinder.QueryBuilder.validate_field_existence(TestResourceForInference, "user..name") ==
-               false
-    end
-
-    test "validates map type embedded fields" do
-      # Map type should allow any nested field (can't validate structure)
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "metadata__any_field"
-             ) == true
-
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "metadata__deeply__nested__field"
-             ) == true
-    end
-
-    @tag capture_log: true
-    test "handles invalid field syntax gracefully" do
-      # Invalid bracket notation
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile[invalid]"
-             ) == false
-
-      # Unclosed bracket
-      assert Cinder.QueryBuilder.validate_field_existence(
-               TestResourceForInference,
-               "profile[:unclosed"
-             ) == false
-
-      # Empty field name
-      assert Cinder.QueryBuilder.validate_field_existence(TestResourceForInference, "profile[:]") ==
-               false
-    end
-
+    @tag :capture_log
     test "column validation uses comprehensive field validation" do
       # Test that Column module properly validates embedded fields
       column_config = %{

@@ -95,27 +95,4 @@ defmodule Cinder.AggregateFilteringTest do
              "Expected numeric filter type for aggregate, got #{filter_config.filter_type}"
     end
   end
-
-  describe "manual filter testing" do
-    test "demonstrates the issue with manual filter configuration" do
-      # This test shows what happens when we manually create filters
-      # for an integer field but use text filter type (current bug scenario)
-
-      columns = [
-        %{
-          field: "track_count",
-          filterable: true,
-          # This is the bug - should be :number_range
-          filter_type: :text,
-          sortable: true
-        }
-      ]
-
-      # Test the filter processing without actual data
-      processed_filters = Cinder.FilterManager.params_to_filters(%{"track_count" => "3"}, columns)
-
-      # The issue is likely here - text filters on integer fields don't work properly
-      assert is_map(processed_filters), "Should process filters without error"
-    end
-  end
 end

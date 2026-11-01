@@ -2,6 +2,7 @@ defmodule Cinder.Filters.RadioGroupTest do
   use ExUnit.Case, async: true
 
   alias Cinder.Filters.RadioGroup
+  alias Cinder.Test.FilterRecord
   alias TestResourceForInference
 
   describe "process/2" do
@@ -96,27 +97,20 @@ defmodule Cinder.Filters.RadioGroupTest do
       %{query: query}
     end
 
-    test "builds equality filter for direct fields", %{query: query} do
+    test "matches a plain field by equality" do
+      hit = FilterRecord.seed(name: "active")
+      _miss = FilterRecord.seed(name: "inactive")
       filter_value = %{type: :radio_group, value: "active", operator: :equals}
-      result = RadioGroup.build_query(query, "name", filter_value)
-      assert result.filter != nil
+
+      assert FilterRecord.matching_ids(RadioGroup, "name", filter_value) == MapSet.new([hit.id])
     end
 
-    test "builds filter for array fields", %{query: query} do
+    test "matches records whose array contains the value" do
+      hit = FilterRecord.seed(tags: ["tag1", "tag2"])
+      _miss = FilterRecord.seed(tags: ["tag2"])
       filter_value = %{type: :radio_group, value: "tag1", operator: :equals}
-      result = RadioGroup.build_query(query, "tags", filter_value)
 
-      # Array fields use containment
-      assert match?(
-               %Ash.Filter{
-                 expression: %Ash.Query.Operator.In{
-                   left: "tag1",
-                   operator: :in,
-                   right: %{attribute: %{name: :tags}}
-                 }
-               },
-               result.filter
-             )
+      assert FilterRecord.matching_ids(RadioGroup, "tags", filter_value) == MapSet.new([hit.id])
     end
 
     test "returns unchanged query for nil value", %{query: query} do
@@ -145,18 +139,26 @@ defmodule Cinder.Filters.RadioGroupTest do
       assert html =~ ~s(name="filters[status]")
     end
 
-    test "marks the current value as checked" do
+    test "checks only the option matching the current value" do
       column = %{
         field: "status",
         filter_options: [options: [{"Active", "active"}, {"Archived", "archived"}]]
       }
 
-      theme = Cinder.Theme.default()
-      rendered = RadioGroup.render(column, "active", theme, %{})
-      html = Phoenix.HTML.Safe.to_iodata(rendered) |> IO.iodata_to_binary()
+      assert checked_values(column, "archived") == ["archived"]
+    end
 
-      # The active radio should be checked
-      assert html =~ "checked"
+    test "checks the matching option when option values are atoms, as enum options are" do
+      column = %{field: "genre", filter_options: [options: [{"Rock", :rock}, {"Jazz", :jazz}]]}
+
+      # The current value comes back from the form as a string
+      assert checked_values(column, "jazz") == ["jazz"]
+    end
+
+    test "checks nothing without a current value" do
+      column = %{field: "genre", filter_options: [options: [{"Rock", :rock}, {"Jazz", :jazz}]]}
+
+      assert checked_values(column, nil) == []
     end
 
     test "keys the radio group by current value" do
@@ -204,5 +206,18 @@ defmodule Cinder.Filters.RadioGroupTest do
       # Should render without error
       assert html =~ "filter_radio_group_container_class"
     end
+  end
+
+  defp checked_values(column, current_value) do
+    html =
+      column
+      |> RadioGroup.render(current_value, Cinder.Theme.default(), %{})
+      |> Phoenix.HTML.Safe.to_iodata()
+      |> IO.iodata_to_binary()
+
+    for [input] <- Regex.scan(~r/<input[^>]*>/, html),
+        input =~ ~r/\schecked/,
+        [_, value] <- [Regex.run(~r/value="([^"]*)"/, input)],
+        do: value
   end
 end

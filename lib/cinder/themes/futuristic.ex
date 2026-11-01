@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Themes.Futuristic do
   @moduledoc """
   A futuristic theme with holographic effects and sci-fi styling.
@@ -108,7 +112,7 @@ defmodule Cinder.Themes.Futuristic do
   set :filter_checkbox_container_class, "flex items-center h-[48px]"
 
   set :filter_checkbox_input_class,
-      "h-4 w-4 bg-slate-900 border-blue-500/40 checked:bg-green-500 checked:border-green-500 focus:ring-green-400 focus:ring-2 cursor-pointer mr-2"
+      "h-4 w-4 bg-slate-900 border-blue-500/40 rounded checked:bg-green-500 checked:border-green-500 focus:ring-green-400 focus:ring-2 cursor-pointer mr-2"
 
   set :filter_checkbox_label_class,
       "text-sm font-light text-blue-100 cursor-pointer tracking-wide"
@@ -136,7 +140,7 @@ defmodule Cinder.Themes.Futuristic do
   set :filter_multicheckboxes_option_class, "flex items-center space-x-3"
 
   set :filter_multicheckboxes_checkbox_class,
-      "h-4 w-4 bg-slate-900 border-blue-500/40 rounded checked:bg-green-500 checked:border-green-500 focus:ring-green-400 focus:ring-2 cursor-pointer"
+      "h-4 w-4 bg-slate-900 border-blue-500/40 rounded checked:bg-green-500 checked:border-green-500 focus:ring-green-400 focus:ring-2 cursor-pointer mr-2"
 
   set :filter_multicheckboxes_label_class,
       "text-sm font-light text-blue-100 cursor-pointer tracking-wide"
@@ -168,7 +172,7 @@ defmodule Cinder.Themes.Futuristic do
       "flex items-center px-3 py-1 text-sm font-light text-blue-100 bg-slate-900/60 border border-blue-500/40 rounded hover:bg-gradient-to-r hover:from-blue-900/60 hover:to-green-900/60 hover:border-green-400/60 hover:shadow-lg hover:shadow-blue-500/20 focus:outline-none focus:ring-2 focus:ring-green-400/50 transition-all duration-300 cursor-pointer tracking-wide backdrop-blur-sm"
 
   set :page_size_dropdown_container_class,
-      "bg-slate-950 border border-blue-500/60 rounded shadow-xl shadow-blue-500/30 backdrop-blur-sm"
+      "bg-slate-950 border border-blue-500/60 rounded shadow-xl shadow-blue-500/30 backdrop-blur-sm overflow-hidden"
 
   set :page_size_option_class,
       "w-full text-left px-3 py-2 text-sm font-light text-blue-100 hover:bg-gradient-to-r hover:from-blue-900/60 hover:to-green-900/60 hover:text-green-400 cursor-pointer tracking-wide"
@@ -239,7 +243,7 @@ defmodule Cinder.Themes.Futuristic do
 
   # Selection
   set :selection_checkbox_class,
-      "h-4 w-4 bg-slate-900 border-blue-500/40 checked:bg-green-500 checked:border-green-500 focus:ring-green-400 focus:ring-2 cursor-pointer"
+      "h-4 w-4 bg-slate-900 border-blue-500/40 rounded checked:bg-green-500 checked:border-green-500 focus:ring-green-400 focus:ring-2 cursor-pointer"
 
   set :selected_row_class, "bg-green-500/10 border-green-500"
   set :grid_selection_overlay_class, "mb-2"

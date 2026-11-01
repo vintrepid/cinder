@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 if Code.ensure_loaded?(Igniter) do
   defmodule Mix.Tasks.Cinder.Gen.Filter do
     @example """
@@ -28,7 +32,6 @@ if Code.ensure_loaded?(Igniter) do
     * `--template` or `-t` - Base filter to copy from: text, select, multi_select, multi_checkboxes, boolean, radio_group, date, date_range, number_range
     * `--no-tests` - Skip generating test file
     * `--no-config` - Skip automatic configuration registration
-    * `--no-setup` - Skip ensuring Cinder.setup() is called in application
 
     ## Available Templates
 
@@ -46,7 +49,7 @@ if Code.ensure_loaded?(Igniter) do
 
     1. Creates a custom filter module that delegates to the chosen built-in filter
     2. Automatically updates the filter type to your custom type
-    3. Generates comprehensive test file (unless --no-tests)
+    3. Generates a test file (unless --no-tests)
     4. Automatically adds the filter to your :cinder configuration
     5. Provides clear examples of how to customize the behavior
 
@@ -89,6 +92,7 @@ if Code.ensure_loaded?(Igniter) do
           template: :string,
           no_tests: :boolean,
           no_config: :boolean,
+          # Did nothing, and still accepted so existing commands keep working
           no_setup: :boolean
         ],
         aliases: [
@@ -103,6 +107,8 @@ if Code.ensure_loaded?(Igniter) do
       options = igniter.args.options
 
       module_name = Igniter.Project.Module.parse(arguments.module)
+      # The developer's own argument on the command line, not client input
+      # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
       filter_type = String.to_atom(arguments.type)
       template = options[:template] || "basic"
 
@@ -126,7 +132,6 @@ if Code.ensure_loaded?(Igniter) do
       |> create_filter_module(module_name, filter_type, template)
       |> maybe_create_test_file(module_name, filter_type, options)
       |> maybe_update_config(filter_type, module_name, options)
-      |> maybe_ensure_cinder_setup(options)
       |> add_completion_notice(module_name, filter_type)
     end
 
@@ -147,6 +152,8 @@ if Code.ensure_loaded?(Igniter) do
         igniter
       else
         # Create test file in test directory with proper naming
+        # A new module, named from the developer's own argument, so a new atom
+        # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
         test_module_name = Module.concat([module_name, Test])
         test_content = generate_test_content(module_name, filter_type)
 
@@ -198,38 +205,21 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
-    # Ensure Cinder.setup() is called in Application module unless --no-setup
-    defp maybe_ensure_cinder_setup(igniter, options) do
-      if options[:no_setup] do
-        igniter
-      else
-        # For now, just add a notice about manual setup
-        # since the Application module modification is complex
-        igniter
-      end
-    end
-
-    # Add completion notice
     defp add_completion_notice(igniter, module_name, filter_type) do
-      # Add informational output using Mix.shell
-      Mix.shell().info("""
-
+      Igniter.add_notice(igniter, """
       Custom filter #{inspect(module_name)} has been generated successfully!
 
       The filter has been automatically registered in your configuration.
 
       Next steps:
-      1. Ensure Cinder.setup() is called in your Application.start/2 function
-      2. Use the filter in your table columns:
+      1. Use the filter in your columns:
 
          <:col field="field_name" filter={:#{filter_type}}>
            {item.field_name}
          </:col>
 
-      3. Run 'mix test' to verify your filter implementation!
+      2. Run 'mix test' to verify your filter implementation!
       """)
-
-      igniter
     end
 
     # Generate filter module content based on template

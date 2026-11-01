@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule Cinder.Filters.NumberRange do
   @moduledoc """
   Number range filter implementation for Cinder tables.
@@ -16,11 +20,14 @@ defmodule Cinder.Filters.NumberRange do
     min_value = get_in(current_value, [:min]) || ""
     max_value = get_in(current_value, [:max]) || ""
     table_id = Map.get(assigns, :table_id)
+    options = Map.get(column, :filter_options, [])
 
     assigns = %{
       column: column,
       min_value: min_value,
       max_value: max_value,
+      # The field's bounds, so both ends of the range take them
+      bounds: [min: options[:min], max: options[:max], step: options[:step]],
       theme: theme,
       min_id: table_id && filter_id(table_id, column.field, "min"),
       max_id: table_id && filter_id(table_id, column.field, "max")
@@ -34,6 +41,7 @@ defmodule Cinder.Filters.NumberRange do
           id={@min_id}
           name={field_name(@column.field, "min")}
           value={@min_value}
+          {@bounds}
           placeholder={dgettext("cinder", "Min")}
           phx-debounce="300"
           class={@theme.filter_number_input_class}
@@ -49,6 +57,7 @@ defmodule Cinder.Filters.NumberRange do
           id={@max_id}
           name={field_name(@column.field, "max")}
           value={@max_value}
+          {@bounds}
           placeholder={dgettext("cinder", "Max")}
           phx-debounce="300"
           class={@theme.filter_number_input_class}
@@ -60,57 +69,35 @@ defmodule Cinder.Filters.NumberRange do
   end
 
   @impl true
-  def process(raw_value, _column) when is_binary(raw_value) do
-    # Handle comma-separated values from form processing
+  def process(raw_value, column) when is_binary(raw_value) do
+    # Comma-separated from URLs: "min,max", or a single "min"
     case String.split(raw_value, ",", parts: 2) do
-      [min, max] ->
-        min_trimmed = String.trim(min)
-        max_trimmed = String.trim(max)
-
-        if min_trimmed == "" and max_trimmed == "" do
-          nil
-        else
-          %{
-            type: :number_range,
-            value: %{min: min_trimmed, max: max_trimmed},
-            operator: :between
-          }
-        end
-
-      [single] ->
-        trimmed = String.trim(single)
-
-        if trimmed == "" do
-          nil
-        else
-          %{
-            type: :number_range,
-            value: %{min: trimmed, max: ""},
-            operator: :between
-          }
-        end
-
-      _ ->
-        nil
+      [min, max] -> process(%{min: min, max: max}, column)
+      [min] -> process(%{min: min, max: ""}, column)
     end
   end
 
+  # A bound that isn't a number (from a hand-edited URL, say) is dropped, leaving the
+  # range open on that side, rather than reaching the data layer
   def process(%{min: min, max: max}, _column) do
-    min_trimmed = String.trim(min || "")
-    max_trimmed = String.trim(max || "")
+    min = usable_bound(min)
+    max = usable_bound(max)
 
-    if min_trimmed == "" and max_trimmed == "" do
+    if min == "" and max == "" do
       nil
     else
-      %{
-        type: :number_range,
-        value: %{min: min_trimmed, max: max_trimmed},
-        operator: :between
-      }
+      %{type: :number_range, value: %{min: min, max: max}, operator: :between}
     end
   end
 
   def process(_raw_value, _column), do: nil
+
+  defp usable_bound(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if valid_number?(trimmed), do: trimmed, else: ""
+  end
+
+  defp usable_bound(_value), do: ""
 
   @impl true
   def validate(value) do
@@ -160,35 +147,16 @@ defmodule Cinder.Filters.NumberRange do
   defp valid_number?(_), do: false
 
   @impl true
-  def build_query(query, field, filter_value) do
-    %{value: %{min: min, max: max}} = filter_value
-
-    case {min, max} do
-      {min_val, max_val} when min_val != "" and max_val != "" ->
-        min_num = parse_number(min_val)
-        max_num = parse_number(max_val)
-
-        # Apply both min and max filters using the centralized helper
-        query
-        |> Cinder.Filter.Helpers.build_ash_filter(field, min_num, :greater_than_or_equal)
-        |> Cinder.Filter.Helpers.build_ash_filter(field, max_num, :less_than_or_equal)
-
-      {min_val, ""} when min_val != "" ->
-        min_num = parse_number(min_val)
-        Cinder.Filter.Helpers.build_ash_filter(query, field, min_num, :greater_than_or_equal)
-
-      {"", max_val} when max_val != "" ->
-        max_num = parse_number(max_val)
-        Cinder.Filter.Helpers.build_ash_filter(query, field, max_num, :less_than_or_equal)
-
-      _ ->
-        query
-    end
+  def build_query(query, field, %{value: %{min: min, max: max}}) do
+    Cinder.Filter.Helpers.build_range_filter(query, field, bound(min), bound(max))
   rescue
     ArgumentError ->
       # Invalid number format, skip filter
       query
   end
+
+  defp bound(value) when value in ["", nil], do: nil
+  defp bound(value), do: parse_number(value)
 
   # Helper function to parse numbers, trying integer first, then float
   defp parse_number(str) when is_binary(str) do
