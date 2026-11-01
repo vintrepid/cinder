@@ -59,27 +59,27 @@ defmodule Cinder.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.33 and >= 3.33.1"},
+      {:ash, "~> 3.37 and >= 3.37.2"},
       {:ash_sql, ">= 0.6.3", optional: true},
       {:lazy_html, ">= 0.1.0", only: :test},
-      {:ash_phoenix, "~> 2.3 and >= 2.3.25"},
-      {:phoenix_live_view, "~> 1.2 and >= 1.2.11"},
+      {:ash_phoenix, "~> 2.3 and >= 2.3.26"},
+      {:phoenix_live_view, "~> 1.2 and >= 1.2.13"},
       {:gettext, "~> 1.0.2"},
-      {:usage_rules, "~> 1.2 and >= 1.2.8", only: [:dev]},
+      {:usage_rules, "~> 1.3 and >= 1.3.1", only: [:dev]},
       {:ex_doc, "~> 0.40.4", only: :dev, runtime: false},
       {:makeup_eex, "~> 2.0 and >= 2.0.2", only: :dev},
       {:makeup_html, ">= 0.0.0", only: :dev},
-      {:igniter, "~> 0.8.4", only: [:dev, :test]},
-      {:sourceror, "~> 1.12 and >= 1.12.2", only: [:dev, :test]},
+      {:igniter, "~> 0.8.5", only: [:dev, :test]},
+      {:sourceror, "~> 1.13", only: [:dev, :test]},
       {:maestro_tool,
        path: System.get_env("MAESTRO_TOOL_PATH", "../maestro_tool"),
        only: [:dev, :test],
        env: :test},
-      {:mimic, "~> 2.4", only: :test},
-      {:phoenix_test, "~> 0.12.1", only: :test, runtime: false},
-      {:ex_check, "~> 0.16.0", only: [:dev], runtime: false},
+      {:mimic, "~> 2.4 and >= 2.4.2", only: :test},
+      {:phoenix_test, "~> 0.14.0", only: :test, runtime: false},
+      {:ex_check, "~> 0.17.1", only: [:dev], runtime: false},
       {:credo, "~> 1.7 and >= 1.7.19", only: [:dev, :test], runtime: false},
-      {:sobelow, "~> 0.15.0", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.18.1", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4 and >= 1.4.8", only: [:dev, :test], runtime: false}
     ]
   end
