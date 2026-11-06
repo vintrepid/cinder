@@ -59,7 +59,7 @@ defmodule Cinder.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.37 and >= 3.37.2"},
+      {:ash, "~> 3.37 and >= 3.37.3"},
       {:ash_sql, ">= 0.6.3", optional: true},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:ash_phoenix, "~> 2.3 and >= 2.3.26"},
@@ -75,7 +75,7 @@ defmodule Cinder.MixProject do
        path: System.get_env("MAESTRO_TOOL_PATH", "../maestro_tool"),
        only: [:dev, :test],
        env: :test},
-      {:mimic, "~> 2.4 and >= 2.4.2", only: :test},
+      {:mimic, "~> 2.5", only: :test},
       {:phoenix_test, "~> 0.14.0", only: :test, runtime: false},
       {:ex_check, "~> 0.17.1", only: [:dev], runtime: false},
       {:credo, "~> 1.7 and >= 1.7.19", only: [:dev, :test], runtime: false},
