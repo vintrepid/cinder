@@ -220,7 +220,7 @@ defmodule Cinder.FilterManagerRuntimeTest do
       assert result == %{type: :slider, value: 75, operator: :equals}
     end
 
-    test "handles custom filter processing errors gracefully" do
+    test "skips the filter when a custom filter's processing raises" do
       Application.put_env(:cinder, :filters, broken: BrokenFilter)
       Registry.register_config_filters()
 
@@ -234,20 +234,15 @@ defmodule Cinder.FilterManagerRuntimeTest do
         capture_log(fn ->
           result = FilterManager.process_filter_value("secret-customer@example.com", column)
 
-          # Should fall back to text processing
-          assert result == %{
-                   type: :text,
-                   value: "secret-customer@example.com",
-                   operator: :contains,
-                   case_sensitive: false
-                 }
+          # A bug in the filter fails closed: no filter, rather than a different one
+          assert result == nil
         end)
 
-      assert log_output =~ "Cinder custom filter processing failed; using text processing"
+      assert log_output =~ "Cinder custom filter processing failed; skipping the filter"
       refute log_output =~ "secret-customer@example.com"
     end
 
-    test "falls back to text processing when custom filter module missing" do
+    test "skips the filter when a custom filter module is missing" do
       # Manually add invalid module to simulate missing module at runtime
       Application.put_env(:cinder, :filters, missing: NonExistentModule)
 
@@ -261,16 +256,11 @@ defmodule Cinder.FilterManagerRuntimeTest do
         capture_log(fn ->
           result = FilterManager.process_filter_value("secret-customer@example.com", column)
 
-          # Should fall back to text processing
-          assert result == %{
-                   type: :text,
-                   value: "secret-customer@example.com",
-                   operator: :contains,
-                   case_sensitive: false
-                 }
+          # A bug in the filter fails closed: no filter, rather than a different one
+          assert result == nil
         end)
 
-      assert log_output =~ "Cinder custom filter processing failed; using text processing"
+      assert log_output =~ "Cinder custom filter processing failed; skipping the filter"
       refute log_output =~ "secret-customer@example.com"
     end
 

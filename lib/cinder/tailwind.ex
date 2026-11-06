@@ -9,7 +9,7 @@ defmodule Cinder.Tailwind do
   # to keep their Tailwind configuration in sync with `priv/cinder.css` and
   # `priv/themes/*.css`.
 
-  @subdirs ~w(filter filters lint renderers table theme)
+  @subdirs ~w(engine filter filters lint next renderers table theme)
 
   @doc "Non-theme subdirs under lib/cinder/ that contain Tailwind classes."
   def subdirs, do: @subdirs

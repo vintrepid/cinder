@@ -3,14 +3,13 @@
 # SPDX-License-Identifier: MIT
 
 defmodule Cinder.FilterManager do
-  @moduledoc """
-  Coordinator for Cinder's modular filter system.
-
-  Acts as the main interface for filter operations while delegating
-  to individual filter type modules for specific implementations.
-  """
+  @moduledoc false
+  # Coordinator for Cinder's filter system, delegating to each filter type's module.
+  # Internal: the shell goes through `Cinder.Engine` and `Cinder.Params`.
 
   use Phoenix.Component
+
+  require Logger
 
   alias Cinder.Filters.Registry
   use Cinder.Messages
@@ -584,6 +583,7 @@ defmodule Cinder.FilterManager do
     end
   end
 
+  # Replaced by `Cinder.Engine.field/2`: remove with the old shell
   @doc """
   Infers filter configuration from Ash resource attribute definitions.
   """
@@ -655,6 +655,7 @@ defmodule Cinder.FilterManager do
     # Use enhanced registry that includes custom filters
     filter_module = Registry.get_filter(column.filter_type)
 
+    # A bug in a filter fails closed: no filter, rather than quietly a different one
     if filter_module do
       try do
         filter_module.process(raw_value, column)
@@ -662,34 +663,25 @@ defmodule Cinder.FilterManager do
         error ->
           require Logger
 
-          Logger.error("Cinder custom filter processing failed; using text processing.",
+          Logger.error("Cinder custom filter processing failed; skipping the filter.",
             event: "cinder.filter.process_failed",
             component: Cinder.Observability.stable_token(column.filter_type),
             error_kind: Cinder.Observability.error_kind(error),
-            outcome: "fallback",
+            outcome: "skipped",
             reason_code: "process_error"
           )
 
-          # Fallback to text processing
-          text_module = Registry.get_filter(:text)
-          text_module.process(raw_value, column)
+          nil
       end
     else
-      # Log warning for missing custom filter
-      if Registry.custom_filter?(column.filter_type) do
-        require Logger
+      Logger.error("Cinder custom filter module is unavailable; skipping the filter.",
+        event: "cinder.filter.module_unavailable",
+        component: Cinder.Observability.stable_token(column.filter_type),
+        outcome: "skipped",
+        reason_code: "module_unavailable"
+      )
 
-        Logger.warning("Cinder custom filter module is unavailable; using text processing.",
-          event: "cinder.filter.module_unavailable",
-          component: Cinder.Observability.stable_token(column.filter_type),
-          outcome: "fallback",
-          reason_code: "module_unavailable"
-        )
-      end
-
-      # Fallback to text processing
-      text_module = Registry.get_filter(:text)
-      text_module.process(raw_value, column)
+      nil
     end
   end
 
@@ -978,6 +970,7 @@ defmodule Cinder.FilterManager do
     end
   end
 
+  # Replaced by `Cinder.Engine.field/2`: remove with the old shell
   @doc """
   Extracts enum options from Ash resource attribute.
 

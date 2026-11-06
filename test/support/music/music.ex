@@ -108,6 +108,8 @@ defmodule Music.Album do
     domain: Music,
     data_layer: Ash.DataLayer.Ets
 
+  require Ash.Query
+
   ets do
     private?(false)
   end
@@ -136,13 +138,31 @@ defmodule Music.Album do
     calculate :title_with, :string, expr(title <> ^arg(:suffix)) do
       argument(:suffix, :string, allow_nil?: false)
     end
+
+    # Shows who's reading, to check the actor reaches the read
+    calculate(:viewer, :string, expr(^actor(:name)))
   end
 
   actions do
     defaults([:read, :destroy])
 
+    # Filters by the query's context, to check context reaches the preparations
+    read :by_context do
+      prepare(fn query, _context ->
+        case query.context[:only_title] do
+          nil -> query
+          title -> Ash.Query.filter(query, title == ^title)
+        end
+      end)
+    end
+
     read :paginated do
       pagination(offset?: true, keyset?: true, countable: true, required?: false)
+    end
+
+    read :by_genre do
+      argument(:genre, Music.Genre, allow_nil?: false)
+      filter(expr(genre == ^arg(:genre)))
     end
 
     # For showing the loading and error states in the dev app
