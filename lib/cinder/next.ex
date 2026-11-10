@@ -11,6 +11,11 @@ defmodule Cinder.Next do
   attr :id, :string, required: true, doc: "The collection's id, unique on the page"
   attr :resource, :atom, default: nil, doc: "The Ash resource to read (or give a `query`)"
   attr :query, :any, default: nil, doc: "The Ash query to read (or give a `resource`)"
+
+  attr :action, :any,
+    default: nil,
+    doc: "The read action, if not the query's or the primary read (atom or string)"
+
   attr :actor, :any, default: nil, doc: "The actor to read as"
   attr :tenant, :any, default: nil, doc: "The tenant to read in"
   attr :scope, :any, default: nil, doc: "An Ash scope"
@@ -19,9 +24,52 @@ defmodule Cinder.Next do
     default: [],
     doc: "More options for the read, as `Ash.read/2` takes them"
 
-  slot :col, required: true, doc: "A column, showing its content for each record" do
-    attr :field, :string, required: true
+  attr :sort, :list,
+    default: [],
+    doc: "How the collection sorts: `[mode: :additive | :exclusive]`"
+
+  attr :search, :list,
+    default: [],
+    doc: "How the collection searches: `[label: ..., placeholder: ..., fn: ...]`"
+
+  attr :pagination, :list, default: [], doc: "How the collection pages: `[mode: ..., size: ...]`"
+
+  attr :url_state, :map,
+    default: nil,
+    doc: "The LiveView's `@url_state` (`use Cinder.UrlSync`), to keep its state in the URL"
+
+  attr :selectable, :any,
+    default: false,
+    doc: "Whether records can be selected: `true`, or a function given each record"
+
+  attr :on_selection_change, :atom,
+    default: nil,
+    doc: "A message to send the LiveView when the selection changes"
+
+  slot :field,
+    required: true,
+    doc: "A field, shown as a column with its content for each record" do
+    attr :name, :string, required: true
     attr :label, :string
+
+    attr :column, :boolean,
+      doc: "Whether it's a column (default `true`). One that isn't can still be filtered."
+
+    attr :sort, :any, doc: "Sort by the field: `true`, or `[cycle: [...]]`"
+
+    attr :filter, :any,
+      doc:
+        "Filter by the field: `true`, or `[type: ..., label: ..., ...]` with the type's options"
+
+    attr :search, :boolean, doc: "Search the field from the search box"
+  end
+
+  slot :argument, doc: "A read action argument, with an input for its value" do
+    attr :name, :string, required: true
+    attr :param, :string, doc: "What it goes by in the form and the URL, if not its name"
+
+    attr :input, :list,
+      doc: "Its input, as a filter's: `[type: ..., label: ..., ...]` with the type's options"
   end
 
   # Runs on every parent render, so it only hands everything on: the collection
@@ -36,8 +84,9 @@ defmodule Cinder.Next do
     <.live_component
       module={Cinder.Next.Collection}
       id={@id}
-      options={assigns_to_attributes(assigns, [:col])}
-      columns={@col}
+      options={assigns_to_attributes(assigns, [:field, :argument])}
+      fields={@field}
+      arguments={@argument}
     />
     """
   end

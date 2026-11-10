@@ -2,7 +2,7 @@ defmodule Cinder.EngineTest do
   use ExUnit.Case, async: true
 
   alias Cinder.Engine
-  alias Cinder.Engine.Field
+  alias Cinder.Engine.{Argument, Field}
 
   describe "field/2" do
     defp filter(name, declared \\ %{}) do
@@ -112,6 +112,27 @@ defmodule Cinder.EngineTest do
                ~s("artist" can't be filtered or sorted: it is a relationship)
     end
 
+    test "the field's path: its relationships, then its name, then any names inside it" do
+      path = fn name ->
+        {:ok, field} = Engine.field(Music.Album, %Field{name: name})
+        field.path
+      end
+
+      assert path.("title") == ["title"]
+      assert path.("artist.name") == ["artist", "name"]
+      assert path.("details__recorded_on") == ["details", "recorded_on"]
+    end
+
+    test "a query is checked against its resource" do
+      query = Ash.Query.for_read(Music.Album, :keyset_only)
+
+      assert {:ok, %{filter: %{type: :select}}} =
+               Engine.field(query, %Field{name: "genre", filter: %{}})
+
+      assert {:error, ~s("nope" is not a field of Music.Album)} =
+               Engine.field(query, %Field{name: "nope"})
+    end
+
     test "showing a field that can't be queried is fine" do
       assert {:ok, %{filter: nil}} = Engine.field(Music.Album, %Field{name: "artist"})
     end
@@ -121,6 +142,19 @@ defmodule Cinder.EngineTest do
       assert message =~ ~s("title")
       assert message =~ ":radio is not a filter type"
       assert message =~ ":radio_group"
+    end
+  end
+
+  describe "read_opts/0" do
+    test "Ash's read options, without the ones the engine sets" do
+      keys = Keyword.keys(Engine.read_opts())
+
+      assert :timeout in keys
+      assert :load in keys
+
+      for set <- [:action, :actor, :tenant, :scope, :page, :return_query?] do
+        refute set in keys
+      end
     end
   end
 
@@ -158,6 +192,164 @@ defmodule Cinder.EngineTest do
     test "sorts on fields that aren't sortable are left out" do
       assert query_sorts(price: :asc, title: :desc) == [{"title", :desc}]
       assert query_sorts(track_count: :asc) == []
+    end
+  end
+
+  describe "pagination/3" do
+    test "an action that pages by offset, counted if it can be" do
+      assert Engine.pagination(Music.Album, :read, :offset) == {:ok, %{count?: true}}
+
+      assert Engine.pagination(Music.Album, :uncountable, :offset) ==
+               {:ok, %{count?: false}}
+    end
+
+    test "an action that pages by keyset" do
+      assert Engine.pagination(Music.Album, :keyset_only, :keyset) ==
+               {:ok, %{count?: true}}
+    end
+
+    test "an action can't be paged in a way it doesn't page" do
+      assert Engine.pagination(Music.Album, :keyset_only, :offset) ==
+               {:error, "Music.Album's :keyset_only action doesn't paginate by offset"}
+
+      assert Engine.pagination(Music.Album, :uncountable, :keyset) ==
+               {:error, "Music.Album's :uncountable action doesn't paginate by keyset"}
+    end
+
+    test "an action that doesn't paginate can't be paged" do
+      for mode <- [:offset, :keyset] do
+        assert Engine.pagination(Music.Album, :by_context, mode) ==
+                 {:error, "Music.Album's :by_context action doesn't paginate"}
+      end
+    end
+  end
+
+  describe "primary_key/1" do
+    test "the field that identifies each record" do
+      assert Engine.primary_key(Music.Album) == {:ok, :id}
+      assert Engine.primary_key(Ash.Query.new(Music.Album)) == {:ok, :id}
+    end
+
+    # No one field identifies a record
+    test "a primary key of several attributes is an error" do
+      assert Engine.primary_key(TestCompositeKey) ==
+               {:error,
+                "TestCompositeKey's primary key isn't a single attribute: [:album_id, :position]"}
+    end
+  end
+
+  describe "read_action/2" do
+    test "the query's action, or the primary read" do
+      assert Engine.read_action(Ash.Query.new(Music.Album), nil) == {:ok, :read}
+      assert Engine.read_action(Music.Album, nil) == {:ok, :read}
+
+      assert Engine.read_action(Ash.Query.for_read(Music.Album, :paginated), nil) ==
+               {:ok, :paginated}
+    end
+
+    test "the given action, by its name or as a string" do
+      assert Engine.read_action(Music.Album, :by_genre) == {:ok, :by_genre}
+      assert Engine.read_action(Music.Album, "by_genre") == {:ok, :by_genre}
+    end
+
+    # On Artist, whose only read is `:read`, so the list doesn't change as Album's grows
+    test "an action that isn't one of the resource's reads is an error naming them" do
+      for action <- [:nope, "nope", :destroy] do
+        assert Engine.read_action(Music.Artist, action) ==
+                 {:error,
+                  "Music.Artist has no read action #{inspect(action)} (its read actions: :read)"}
+      end
+    end
+
+    test "a query that reads with a different action is an error" do
+      query = Ash.Query.for_read(Music.Album, :paginated)
+      assert Engine.read_action(query, :paginated) == {:ok, :paginated}
+
+      assert Engine.read_action(query, :by_genre) ==
+               {:error,
+                "the query already reads with :paginated, so it can't read with :by_genre"}
+    end
+  end
+
+  describe "argument/3" do
+    defp input(name, input \\ %{}) do
+      {:ok, argument} =
+        Engine.argument(Music.Album, :by_inputs, %Argument{name: name, input: input})
+
+      argument.input
+    end
+
+    test "infers an input type from the argument's Ash type" do
+      assert input("remastered").type == :boolean
+      assert input("title").type == :text
+      assert input("labels").type == :multi_select
+      assert input("released_on").type == :date
+      assert input("size").type == :select
+    end
+
+    test "an enum or `one_of` argument's values are its options" do
+      assert input("size").options[:options] == [{"Single", :single}, {"Double", :double}]
+
+      {:ok, argument} =
+        Engine.argument(Music.Album, :by_genre, %Argument{name: "genre", input: %{}})
+
+      assert argument.input.module == Cinder.Filters.Select
+      assert length(argument.input.options[:options]) == 4
+    end
+
+    test "a declared type and options win, as with a filter" do
+      assert %{type: :radio_group, module: Cinder.Filters.RadioGroup} =
+               input =
+               input("size", %{type: :radio_group, options: [options: [{"One", :single}]]})
+
+      assert input.options[:options] == [{"One", :single}]
+    end
+
+    test "an argument goes by its name in the form and the URL, unless it has a `param`" do
+      {:ok, genre} = Engine.argument(Music.Album, :by_genre, %Argument{name: "genre", input: %{}})
+      assert genre.param == "genre"
+
+      {:ok, genre} =
+        Engine.argument(Music.Album, :by_genre, %Argument{
+          name: "genre",
+          param: "style",
+          input: %{}
+        })
+
+      assert genre.param == "style"
+    end
+
+    test "an argument is required if it can't be nil and has no default" do
+      {:ok, genre} = Engine.argument(Music.Album, :by_genre, %Argument{name: "genre", input: %{}})
+      assert genre.required?
+
+      {:ok, title} =
+        Engine.argument(Music.Album, :by_inputs, %Argument{name: "title", input: %{}})
+
+      refute title.required?
+    end
+
+    test "an argument the action doesn't have is an error" do
+      assert Engine.argument(Music.Album, :read, %Argument{name: "genre", input: %{}}) ==
+               {:error, ~s("genre" is not an argument of Music.Album's :read action)}
+    end
+
+    test "an unknown input type is an error naming the known ones" do
+      {:error, message} =
+        Engine.argument(Music.Album, :by_genre, %Argument{name: "genre", input: %{type: :nope}})
+
+      assert message =~
+               ~r/^"genre" can't be an input: :nope is not a filter type \(known: :autocomplete/
+    end
+
+    # The action's preparations have already run without the argument
+    test "a query already prepared for its action can't take arguments" do
+      query = Ash.Query.for_read(Music.Album, :by_genre, %{genre: :rock})
+
+      assert Engine.argument(query, :by_genre, %Argument{name: "genre", input: %{}}) ==
+               {:error,
+                ~s("genre" can't be given: the query is already prepared for :by_genre, ) <>
+                  "so the action has run without it. Give the action as `action` instead"}
     end
   end
 end

@@ -13,7 +13,7 @@ defmodule Cinder.Engine do
   #
   # Turning form and URL strings into values belongs to `Cinder.Params`, not here.
 
-  alias Cinder.Engine.{Error, Field, Page, Query}
+  alias Cinder.Engine.{Argument, Error, Field, Page, Query}
   alias Cinder.Filters.Registry
   alias Cinder.QueryBuilder
 
@@ -27,10 +27,20 @@ defmodule Cinder.Engine do
 
   @number_types [Ash.Type.Integer, Ash.Type.Decimal, Ash.Type.Float]
 
+  # Read options the engine sets itself, from the query it's given
+  @set_read_opts [:action, :actor, :tenant, :scope, :page, :return_query?]
+
   @doc """
-  Checks a field as declared (a `Cinder.Engine.Field`) against `resource`, and
-  fills in the rest: its filter's type, module and options, and what showing it
-  needs loaded.
+  The read options a caller may give in `run/4`'s `query_opts`: `Ash.read/2`'s,
+  without the ones the engine sets, as a `Spark.Options` schema.
+  """
+  @spec read_opts() :: keyword()
+  def read_opts, do: Keyword.drop(Ash.read_opts(), @set_read_opts)
+
+  @doc """
+  Checks a field as declared (a `Cinder.Engine.Field`) against `source` (a
+  resource, or a query on one), and fills in the rest: its filter's type, module
+  and options, what showing it needs loaded, and its path.
 
   A filter's options are its type's defaults, then the field's enum values (for
   types that take `options`), then the declared ones.
@@ -39,15 +49,16 @@ defmodule Cinder.Engine do
   a field the resource doesn't have, filtering, sorting or searching a field that
   can't be queried, or a filter type that doesn't exist.
   """
-  @spec field(module(), Field.t()) :: {:ok, Field.t()} | {:error, String.t()}
-  def field(resource, %Field{name: name} = field) do
+  @spec field(Ash.Query.t() | module(), Field.t()) :: {:ok, Field.t()} | {:error, String.t()}
+  def field(source, %Field{name: name} = field) do
     uses = [filtered: field.filter != nil, sorted: field.sortable?, searched: field.searchable?]
 
-    with {:ok, resolved} <- resolve(resource, name),
+    with {:ok, resolved} <- resolve(Ash.Query.new(source).resource, name),
          :ok <- queryable(resolved, uses),
          {:ok, filter} <- filter(resolved, field.filter) do
       load = if field.column?, do: Cinder.Field.load(resolved)
-      {:ok, %{field | filter: filter, load: load}}
+      path = Enum.map(resolved.relationships, &to_string/1) ++ [to_string(resolved.name)]
+      {:ok, %{field | filter: filter, load: load, path: path ++ resolved.embedded_path}}
     else
       {:error, problem} -> {:error, "#{inspect(name)} #{problem}"}
     end
@@ -90,25 +101,164 @@ defmodule Cinder.Engine do
   defp sort_name(_key), do: nil
 
   @doc """
+  The attribute that identifies each of `source`'s records, for selecting them: its
+  resource's primary key. A primary key that isn't one attribute (several, or none)
+  is an error, as no one field identifies a record.
+  """
+  @spec primary_key(Ash.Query.t() | module()) :: {:ok, atom()} | {:error, String.t()}
+  def primary_key(source) do
+    resource = Ash.Query.new(source).resource
+
+    case Ash.Resource.Info.primary_key(resource) do
+      [key] ->
+        {:ok, key}
+
+      keys ->
+        {:error, "#{inspect(resource)}'s primary key isn't a single attribute: #{inspect(keys)}"}
+    end
+  end
+
+  @doc """
+  The read action `source` is read with: the query's, or `action` (an atom, or a
+  string matched to the resource's read actions' names), or the primary read.
+
+  A query that already reads with an action is one `Ash.Query.for_read/4` has
+  prepared, so asking for a different one is an error, as is an action that isn't
+  one of the resource's reads.
+  """
+  @spec read_action(Ash.Query.t() | module(), atom() | String.t() | nil) ::
+          {:ok, atom()} | {:error, String.t()}
+  def read_action(source, action) do
+    query = Ash.Query.new(source)
+    reads = for %{type: :read, name: name} <- Ash.Resource.Info.actions(query.resource), do: name
+    named = Enum.find(reads, &(to_string(&1) == to_string(action)))
+
+    cond do
+      action == nil and query.action != nil ->
+        {:ok, query.action.name}
+
+      action == nil ->
+        {:ok, Ash.Resource.Info.primary_action!(query.resource, :read).name}
+
+      named == nil ->
+        {:error,
+         "#{inspect(query.resource)} has no read action #{inspect(action)} " <>
+           "(its read actions: #{Enum.map_join(reads, ", ", &inspect/1)})"}
+
+      query.action != nil and query.action.name != named ->
+        {:error,
+         "the query already reads with #{inspect(query.action.name)}, " <>
+           "so it can't read with #{inspect(named)}"}
+
+      true ->
+        {:ok, named}
+    end
+  end
+
+  @doc """
+  Checks an argument as declared (a `Cinder.Engine.Argument`) against `action`
+  (from `read_action/2`), and fills in the rest: its input's type, module and
+  options, as a filter's, and whether it's required.
+
+  An argument the action doesn't have is an error, as is any argument for a query
+  already prepared for its action: its preparations have run without it.
+  """
+  @spec argument(Ash.Query.t() | module(), atom(), Argument.t()) ::
+          {:ok, Argument.t()} | {:error, String.t()}
+  def argument(source, action, %Argument{name: name} = argument) do
+    query = Ash.Query.new(source)
+    action = Ash.Resource.Info.action(query.resource, action)
+    found = Enum.find(action.arguments, &(to_string(&1.name) == name))
+
+    cond do
+      query.action != nil ->
+        {:error,
+         "#{inspect(name)} can't be given: the query is already prepared for " <>
+           "#{inspect(query.action.name)}, so the action has run without it. " <>
+           "Give the action as `action` instead"}
+
+      found == nil ->
+        {:error,
+         "#{inspect(name)} is not an argument of " <>
+           "#{inspect(query.resource)}'s #{inspect(action.name)} action"}
+
+      true ->
+        input(argument, found)
+    end
+  end
+
+  defp input(argument, found) do
+    ash_type = Ash.Type.get_type(found.type)
+    values = enum_values(ash_type, found.constraints)
+    type = Map.get(argument.input, :type) || infer_input_type(ash_type, values)
+
+    case control(type, values, Map.get(argument.input, :options, [])) do
+      {:ok, input} ->
+        required? = found.allow_nil? == false and is_nil(found.default)
+        param = argument.param || argument.name
+        {:ok, %{argument | input: input, required?: required?, param: param}}
+
+      {:error, problem} ->
+        {:error, "#{inspect(argument.name)} can't be an input: #{problem}"}
+    end
+  end
+
+  # An argument takes a single value, so a single date, not a range, and a number
+  # is typed. A list takes several.
+  defp infer_input_type(ash_type, values) do
+    cond do
+      match?({:array, _}, ash_type) -> :multi_select
+      values != [] -> :select
+      ash_type == Ash.Type.Boolean -> :boolean
+      ash_type == Ash.Type.Date -> :date
+      true -> :text
+    end
+  end
+
+  @doc """
+  Whether `source` read with `action` (from `read_action/2`) can page by `mode`
+  (`:offset` or `:keyset`), and if so whether it can count the records: Ash's read
+  fails if asked to do either when the action can't.
+  """
+  @spec pagination(Ash.Query.t() | module(), atom(), :offset | :keyset) ::
+          {:ok, %{count?: boolean()}} | {:error, String.t()}
+  def pagination(source, action, mode) when mode in [:offset, :keyset] do
+    query = Ash.Query.new(source)
+    action = Ash.Resource.Info.action(query.resource, action)
+    can_page? = if mode == :offset, do: :offset?, else: :keyset?
+    action_name = "#{inspect(query.resource)}'s #{inspect(action.name)} action"
+
+    case action.pagination do
+      %{^can_page? => true, countable: countable} -> {:ok, %{count?: countable != false}}
+      %{} -> {:error, "#{action_name} doesn't paginate by #{mode}"}
+      _none -> {:error, "#{action_name} doesn't paginate"}
+    end
+  end
+
+  @doc """
   Reads a page of records from `source` (a resource or query): `query`'s
-  filters, arguments, search, sort and page, on the `fields` from `field/2`.
+  filters, arguments (each its input's value, as a filter's), search, sort and
+  page, on the `fields` from `field/2`.
 
   Options, which come from the collection rather than the user:
 
     * `actor`, `tenant` and `scope` - as `Ash.read/2` takes them, which decides
       between them (an explicit actor or tenant wins over the scope's)
     * `action` - the read action, if not the source query's or the primary one
-    * `query_opts` - more of `Ash.read/2`'s options. Each reaches the read, and the
-      ones `Ash.Query.for_read/4` also takes reach the query when it's built, so
-      the action's preparations see them. `load` is merged with the columns' loads.
+    * `query_opts` - more of `Ash.read/2`'s options, those in `read_opts/0`. Each
+      reaches the read, and the ones `Ash.Query.for_read/4` also takes reach the
+      query when it's built, so the action's preparations see them. `load` is
+      merged with the columns' loads.
     * `pagination` - `:offset` (default) or `:keyset`
-    * `search_fn` - a function to search with instead of a `contains` on each
-      searchable field, called as `search_fn.(query, searchable_columns, term)`
-      with the `Ash.Query` so far, the searchable fields as column maps (`field`,
-      `label`, `filter_type`, ...), and the search term. It returns the query.
+    * `search_fn` - a function to search with instead of a case-insensitive
+      `contains` on each searchable field, called as `search_fn.(query, fields, text)`
+      with the `Ash.Query` so far, the searchable fields in order, each as
+      `%{name: "artist.name", expr: <Ash expression>}`, and the search text. It
+      returns the query.
     * `count?` - whether to count the records (default `true`)
-    * `arguments` - the names of the read action arguments the user has inputs
-      for, so errors about them go on those inputs
+    * `arguments` - the read action's `Cinder.Engine.Argument`s, from
+      `argument/3`: `query`'s `arguments` are under their `param`s, and so are
+      errors about them, which the user can fix. Values for any others are left out.
 
   Every column's `load` is loaded, along with any in `query_opts`.
 
@@ -124,11 +274,11 @@ defmodule Cinder.Engine do
     options = [
       columns: Enum.map(fields, &Field.to_column_map/1),
       filters: query.filters,
-      arguments: query.arguments,
+      arguments: argument_values(query.arguments, opts[:arguments] || []),
       search_term: query.search,
       sort_by: query.sort,
       current_page: query.page,
-      page_size: query.page_size,
+      page_size: query.page_size || %Query{}.page_size,
       after_keyset: Query.cursor(query, :after),
       before_keyset: Query.cursor(query, :before),
       scope: opts[:scope],
@@ -139,34 +289,61 @@ defmodule Cinder.Engine do
       read_opts: read_opts,
       pagination_mode: Keyword.get(opts, :pagination, :offset),
       count_mode: Keyword.get(opts, :count?, true),
-      search_fn: opts[:search_fn]
+      search_fn: search_fn(opts[:search_fn], source, fields)
     ]
 
     case QueryBuilder.build_and_execute(source, options) do
       {:ok, result} -> {:ok, page(result, query, options[:pagination_mode])}
-      {:error, reason} -> {:error, error(reason, Keyword.get(opts, :arguments, []))}
+      {:error, reason} -> {:error, error(reason, opts[:arguments] || [])}
     end
+  end
+
+  # The action takes each by its name
+  defp argument_values(values, arguments) do
+    for %Argument{name: name, param: param} <- arguments,
+        %{value: value} <- [values[param]],
+        into: %{},
+        do: {name, value}
+  end
+
+  # `QueryBuilder` calls a search function with column maps, which stay behind the
+  # engine: the shell's gets each searchable field's name and expression instead
+  defp search_fn(nil, _source, _fields), do: nil
+
+  defp search_fn(search_fn, source, fields) do
+    resource = Ash.Query.new(source).resource
+
+    searchable =
+      for %Field{searchable?: true, name: name} <- fields do
+        {:ok, resolved} = Cinder.Field.resolve(resource, name)
+        %{name: name, expr: Cinder.Field.expr(resolved)}
+      end
+
+    fn query, _columns, text -> search_fn.(query, searchable, text) end
   end
 
   # Ash wraps its errors in a class (`Ash.Error.Invalid`, `Ash.Error.Unknown`, ...),
   # with the errors themselves in `errors`
   defp error(reason, arguments) do
+    params = Map.new(arguments, &{&1.name, &1.param})
     errors = if is_map(reason), do: Map.get(reason, :errors, [reason]), else: [reason]
-    {on_inputs, others} = Enum.split_with(errors, &on_input?(&1, arguments))
+    {on_inputs, others} = Enum.split_with(errors, &on_input?(&1, params))
 
     # The conversion Phoenix forms use, so the messages are the ones a form would show.
     # One error can give several.
     inputs =
       on_inputs
       |> Enum.flat_map(&List.wrap(AshPhoenix.FormData.Error.to_form_error(&1)))
-      |> Enum.group_by(&to_string(elem(&1, 0)), fn {_field, message, vars} -> {message, vars} end)
+      |> Enum.group_by(&params[to_string(elem(&1, 0))], fn {_field, message, vars} ->
+        {message, vars}
+      end)
 
     %Error{inputs: inputs, reason: if(others != [], do: reason)}
   end
 
   # Only an argument with an input can be fixed by the user
-  defp on_input?(error, arguments) do
-    is_map(error) and to_string(Map.get(error, :field)) in arguments and
+  defp on_input?(error, params) do
+    is_map(error) and Map.has_key?(params, to_string(Map.get(error, :field))) and
       AshPhoenix.FormData.Error.impl_for(error) != nil
   end
 
@@ -241,6 +418,13 @@ defmodule Cinder.Engine do
     values = enum_values(ash_type, Cinder.Field.constraints(resolved))
     type = Map.get(declared, :type) || infer_type(ash_type, values)
 
+    with {:error, problem} <- control(type, values, Map.get(declared, :options, [])) do
+      {:error, "can't be filtered: #{problem}"}
+    end
+  end
+
+  # A filter's control, or an argument's input: its type's module and options
+  defp control(type, values, declared_options) do
     with {:ok, module} <- filter_module(type) do
       defaults = module.default_options()
 
@@ -251,7 +435,7 @@ defmodule Cinder.Engine do
       options =
         defaults
         |> Keyword.merge(enum_options)
-        |> Keyword.merge(Map.get(declared, :options, []))
+        |> Keyword.merge(declared_options)
 
       {:ok, %{type: type, module: module, options: options}}
     end
@@ -265,13 +449,12 @@ defmodule Cinder.Engine do
         if Code.ensure_loaded?(module) do
           {:ok, module}
         else
-          {:error,
-           "can't be filtered: #{inspect(type)}'s module #{inspect(module)} can't be loaded"}
+          {:error, "#{inspect(type)}'s module #{inspect(module)} can't be loaded"}
         end
 
       :error ->
         names = known |> Map.keys() |> Enum.sort() |> Enum.map_join(", ", &inspect/1)
-        {:error, "can't be filtered: #{inspect(type)} is not a filter type (known: #{names})"}
+        {:error, "#{inspect(type)} is not a filter type (known: #{names})"}
     end
   end
 

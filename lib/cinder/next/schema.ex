@@ -9,14 +9,16 @@ defmodule Cinder.Next.Schema do
   # several options together are `Cinder.Next.Config`'s. Errors name the declaration
   # they're about.
 
-  # Read options the collection sets from its own attributes (or will: `action` and
-  # `page`), so they can't also be given in `query_opts`
-  @own_read_opts [:action, :actor, :tenant, :scope, :page, :return_query?]
-
   @collection [
     id: [type: :string, required: true, doc: "The collection's id, unique on the page."],
     resource: [type: {:spark, Ash.Resource}, doc: "The Ash resource to read (or give a `query`)."],
     query: [type: {:struct, Ash.Query}, doc: "The Ash query to read (or give a `resource`)."],
+    action: [
+      type: {:or, [:atom, :string]},
+      doc:
+        "The read action, if not the query's or the primary read. " <>
+          "Give it here, not in the query, for its arguments to be given."
+    ],
     actor: [type: :any, doc: "The actor to read as."],
     tenant: [type: :any, doc: "The tenant to read in."],
     scope: [
@@ -24,35 +26,165 @@ defmodule Cinder.Next.Schema do
       doc: "An Ash scope. An `actor` or `tenant` given as well wins over the scope's, as in Ash."
     ],
     query_opts: [
-      type: {:keyword_list, Keyword.drop(Ash.read_opts(), @own_read_opts)},
+      type: {:keyword_list, Cinder.Engine.read_opts()},
       doc: "More options for the read, as `Ash.read/2` takes them."
+    ],
+    sort: [
+      type:
+        {:keyword_list,
+         [
+           mode: [
+             type: {:in, [:additive, :exclusive]},
+             default: :additive,
+             doc: "Whether a column clicked adds to the sort (`:additive`) or replaces it."
+           ]
+         ]},
+      default: [],
+      doc: "How the collection sorts."
+    ],
+    search: [
+      type:
+        {:keyword_list,
+         [
+           label: [type: :string, doc: "The search box's label. Defaults to \"Search\"."],
+           placeholder: [
+             type: :string,
+             doc: "The search box's placeholder. Defaults to \"Search...\"."
+           ],
+           fn: [
+             type: {:fun, 3},
+             doc:
+               "Searches instead of a case-insensitive `contains` on each searchable field: " <>
+                 "called with the `Ash.Query`, the searchable fields " <>
+                 "(`%{name: \"artist.name\", expr: <Ash expression>}`), and the text. " <>
+                 "Returns the query."
+           ]
+         ]},
+      default: [],
+      doc: "How the collection searches. It has a search box if any field is searchable."
+    ],
+    pagination: [
+      type:
+        {:keyword_list,
+         [
+           mode: [
+             type: {:in, [:offset, :keyset]},
+             doc: "`:offset` or `:keyset`. By default, offset if the read action can, or keyset."
+           ],
+           size: [type: :pos_integer, default: 25, doc: "How many records a page shows."]
+         ]},
+      default: [],
+      doc:
+        "How the collection pages, if the read action can. " <>
+          "Giving this for an action that can't page that way is an error."
+    ],
+    url_state: [
+      type: {:or, [nil, :map]},
+      doc:
+        "The LiveView's `@url_state`, from `use Cinder.UrlSync`, " <>
+          "to keep the sort, filters, search and page in the URL."
+    ],
+    selectable: [
+      type: {:or, [:boolean, {:fun, 1}]},
+      default: false,
+      doc:
+        "Whether records can be selected, with a box each: `true`, or a function " <>
+          "given each record, for only some. Records are told apart by their primary key."
+    ],
+    on_selection_change: [
+      type: :atom,
+      doc:
+        "A message to send the LiveView when the selection changes: " <>
+          "`{name, %{selected_ids:, selected_count:, component_id:}}`."
     ]
   ]
 
-  @col [
-    field: [type: :string, required: true, doc: "The field the column shows."],
-    label: [type: :string, doc: "The column's heading. Defaults to the humanised field."]
+  @directions [:asc, :desc, :asc_nils_first, :asc_nils_last, :desc_nils_first, :desc_nils_last]
+
+  # Cinder's own keys in a `<:field>`'s `filter`. Any others are the filter type's
+  # options, split off before Spark sees them.
+  @filter [
+    type: [type: :atom, doc: "The filter type. Inferred from the field if not given."],
+    label: [type: :string, doc: "The control's label. Defaults to the column's."]
+  ]
+
+  # The same for an `<:argument>`'s `input`
+  @input [
+    type: [type: :atom, doc: "The input type. Inferred from the argument if not given."],
+    label: [type: :string, doc: "The input's label. Defaults to the humanised name."]
+  ]
+
+  @field [
+    name: [type: :string, required: true, doc: "The field's name, or path (`artist.name`)."],
+    label: [type: :string, doc: "The column's heading. Defaults to the humanised name."],
+    column: [
+      type: :boolean,
+      default: true,
+      doc: "Whether it's a column. If not, it has no heading or cells, and needs no content."
+    ],
+    search: [type: :boolean, default: false, doc: "Search the field from the search box."],
+    # `sort` and `filter` alone (`true`) mean `[]`, and `false` is left out, before this
+    sort: [
+      type:
+        {:keyword_list,
+         [
+           cycle: [
+             type: {:list, {:in, [nil | @directions]}},
+             default: [nil, :asc, :desc],
+             doc:
+               "The directions clicking the heading steps through. Without `nil`, it's always sorted."
+           ]
+         ]},
+      doc: "Sort by the field, by clicking its heading: `sort`, or `sort={[cycle: [...]]}`."
+    ],
+    filter: [
+      type: {:keyword_list, @filter},
+      doc:
+        "Filter by the field: `filter`, or `filter={[type: ..., label: ..., ...]}` " <>
+          "with the type's own options."
+    ]
+  ]
+
+  @argument [
+    name: [type: :string, required: true, doc: "The read action argument's name."],
+    param: [
+      type: :string,
+      doc:
+        "What it goes by in the form and the URL, if not its name: " <>
+          "for a name that's a field's, or one of the collection's own URL params."
+    ],
+    input: [
+      type: {:keyword_list, @input},
+      default: [],
+      doc:
+        "Its input, as a filter's: `input={[type: ..., label: ..., ...]}` " <>
+          "with the type's own options."
+    ]
   ]
 
   def collection, do: @collection
-  def col, do: @col
+  def field, do: @field
+  def argument, do: @argument
 
   @doc "The collection's options, checked."
   def validate_collection!(options) do
     declaration = ~s(<Cinder.Next.collection id="#{options[:id]}">)
     check_query_opts!(options[:query_opts] || [], declaration)
 
-    # Checking `query_opts` against Ash's schema fills in Ash's defaults, which are
-    # Ash's to apply: only the options given are kept
+    # Checking `query_opts` against the read options' schema fills in Ash's
+    # defaults, which are Ash's to apply: only the options given are kept
     options
     |> validate!(@collection, declaration)
     |> Keyword.replace(:query_opts, options[:query_opts])
   end
 
-  # Before the schema, which would only call these unknown
+  # Before the schema, which would only call these unknown: `select`, and the
+  # collection's own attributes (such as `actor` and `tenant`)
   defp check_query_opts!(query_opts, declaration) do
+    explained = [:select | Keyword.keys(@collection) -- Keyword.keys(Cinder.Engine.read_opts())]
+
     if Keyword.keyword?(query_opts) do
-      case Enum.find(Keyword.keys(query_opts), &(&1 in [:select | @own_read_opts])) do
+      case Enum.find(Keyword.keys(query_opts), &(&1 in explained)) do
         nil ->
           :ok
 
@@ -68,11 +200,54 @@ defmodule Cinder.Next.Schema do
     end
   end
 
-  @doc "A `<:col>` slot entry's attributes, checked."
-  def validate_col!(slot) do
-    attributes = slot |> Map.drop([:__slot__, :inner_block]) |> Enum.to_list()
-    validate!(attributes, @col, ~s(<:col field="#{slot[:field]}">))
+  @doc """
+  A `<:field>` slot entry's attributes, checked. A filter's type options come back
+  under its `options` key, unchecked: they're the type's to check.
+  """
+  def validate_field!(slot) do
+    attributes =
+      slot
+      |> Map.drop([:__slot__, :inner_block])
+      |> Enum.flat_map(&shorthand/1)
+
+    {attributes, filter_options} = split_type_options(attributes, :filter, @filter)
+
+    attributes
+    |> validate!(@field, ~s(<:field name="#{slot[:name]}">))
+    |> Keyword.replace_lazy(:filter, &Keyword.put(&1, :options, filter_options))
   end
+
+  @doc """
+  An `<:argument>` slot entry's attributes, checked. Its input's type options come
+  back under its `options` key, unchecked, as a filter's do.
+  """
+  def validate_argument!(slot) do
+    {attributes, input_options} =
+      slot
+      |> Map.drop([:__slot__, :inner_block])
+      |> Enum.to_list()
+      |> split_type_options(:input, @input)
+
+    attributes
+    |> validate!(@argument, ~s(<:argument name="#{slot[:name]}">))
+    |> Keyword.update!(:input, &Keyword.put(&1, :options, input_options))
+  end
+
+  # Spark rejects keys its schema doesn't have, and a type's options can be anything
+  defp split_type_options(attributes, key, schema) do
+    with given when is_list(given) <- attributes[key],
+         true <- Keyword.keyword?(given) do
+      {own, options} = Keyword.split(given, Keyword.keys(schema))
+      {Keyword.put(attributes, key, own), options}
+    else
+      _not_a_keyword_list -> {attributes, []}
+    end
+  end
+
+  # One shape for each option, so an error is about that shape alone
+  defp shorthand({key, true}) when key in [:sort, :filter], do: [{key, []}]
+  defp shorthand({key, false}) when key in [:sort, :filter], do: []
+  defp shorthand(attribute), do: [attribute]
 
   # Unset attrs arrive as `nil`, which means "not given"
   defp validate!(options, schema, declaration) do

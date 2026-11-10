@@ -28,6 +28,7 @@ msgid_plural "active"
 msgstr[0] "aktiv"
 msgstr[1] "aktive"
 
+#: lib/cinder/next/collection.ex
 #: lib/cinder/renderers/pagination.ex
 #, elixir-autogen
 msgid "Page %{current} of %{total}"
@@ -44,11 +45,13 @@ msgstr "viser %{start}-%{end} av %{total}"
 msgid "to"
 msgstr "til"
 
+#: lib/cinder/next/collection.ex
 #: lib/cinder/renderers/pagination.ex
 #, elixir-autogen
 msgid "Next page"
 msgstr "Neste side"
 
+#: lib/cinder/next/collection.ex
 #: lib/cinder/renderers/pagination.ex
 #, elixir-autogen
 msgid "Previous page"
@@ -137,12 +140,14 @@ msgstr "Alle %{label}"
 
 #: lib/cinder/collection.ex
 #: lib/cinder/controls.ex
+#: lib/cinder/next/collection.ex
 #, elixir-autogen, elixir-format
 msgid "Search"
 msgstr "Søk"
 
 #: lib/cinder/collection.ex
 #: lib/cinder/controls.ex
+#: lib/cinder/next/collection.ex
 #, elixir-autogen, elixir-format
 msgid "Search..."
 msgstr "Søk..."
@@ -199,7 +204,18 @@ msgstr "Skriv for å søke flere alternativer..."
 msgid "An error occurred while loading data"
 msgstr "Det oppstod en feil under lasting av data"
 
+#: lib/cinder/next/collection.ex
 #: lib/cinder/renderers/pagination.ex
 #, elixir-autogen, elixir-format
 msgid "Page %{current}"
 msgstr "Side %{current}"
+
+#: lib/cinder/next/collection.ex
+#, elixir-autogen, elixir-format
+msgid "Select all on this page"
+msgstr "Velg alle på denne siden"
+
+#: lib/cinder/next/collection.ex
+#, elixir-autogen, elixir-format
+msgid "Select row"
+msgstr "Velg rad"

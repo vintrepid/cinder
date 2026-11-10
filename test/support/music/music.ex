@@ -160,9 +160,28 @@ defmodule Music.Album do
       pagination(offset?: true, keyset?: true, countable: true, required?: false)
     end
 
+    read :uncountable do
+      pagination(offset?: true, countable: false, required?: false)
+    end
+
+    read :keyset_only do
+      pagination(keyset?: true, required?: false)
+    end
+
     read :by_genre do
       argument(:genre, Music.Genre, allow_nil?: false)
       filter(expr(genre == ^arg(:genre)))
+    end
+
+    # An argument of each kind of type, for inferring inputs
+    read :by_inputs do
+      argument(:remastered, :boolean)
+      argument(:title, :string)
+      argument(:labels, {:array, :string})
+      argument(:released_on, :date)
+      argument(:size, :atom, constraints: [one_of: [:single, :double]])
+      # Clashes with the collection's own URL param
+      argument(:page, :integer)
     end
 
     # For showing the loading and error states in the dev app

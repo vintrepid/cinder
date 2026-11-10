@@ -2,6 +2,8 @@ defmodule Cinder.EngineRunTest do
   # The Music records are shared ETS data
   use Cinder.ConnCase, async: false
 
+  require Ash.Query
+
   alias Cinder.Engine
   alias Cinder.Engine.{Field, Page, Query}
 
@@ -87,14 +89,28 @@ defmodule Cinder.EngineRunTest do
     assert %Page{more?: true, previous?: false} = back
   end
 
+  test "with no page size, an action that doesn't page reads every record, and one that does uses the default" do
+    assert %Page{page_size: nil} = page = run(%{page_size: nil}, action: :by_context)
+    assert length(page.records) == 3
+    assert %Page{page_size: 25} = run(%{page_size: nil}, action: :paginated)
+  end
+
   test "offset and unpaginated pages have no cursors" do
     assert %Page{first_cursor: nil, last_cursor: nil} = run(%{}, action: :paginated)
     assert %Page{first_cursor: nil, last_cursor: nil} = run(%{})
   end
 
-  test "passes arguments to the read action" do
+  defp genre(param) do
+    argument = %Engine.Argument{name: "genre", param: param, input: %{}}
+    {:ok, argument} = Engine.argument(Music.Album, :by_genre, argument)
+    argument
+  end
+
+  # Arguments are their inputs' values, as filters are, under their `param`s
+  test "passes each argument's value to the read action" do
     generate(album(title: "Jazzy", genre: :jazz))
-    page = run(%{arguments: %{"genre" => "jazz"}}, action: :by_genre)
+    genre = %{type: :select, value: "jazz", operator: :equals}
+    page = run(%{arguments: %{"style" => genre}}, action: :by_genre, arguments: [genre("style")])
     assert "Jazzy" in titles(page)
     assert Enum.all?(page.records, &(&1.genre == :jazz))
   end
@@ -114,14 +130,15 @@ defmodule Cinder.EngineRunTest do
 
     # `QueryBuilder` logs every failed read, even one the user just needs to finish
     @tag :capture_log
+    # Under the input's `param`, which is what the shell knows it by
     test "a missing or invalid argument is an error on that input, to translate" do
-      opts = [action: :by_genre, arguments: ["genre"]]
+      opts = [action: :by_genre, arguments: [genre("style")]]
 
       assert error(%{}, opts) ==
-               %Engine.Error{inputs: %{"genre" => [{"is required", []}]}, reason: nil}
+               %Engine.Error{inputs: %{"style" => [{"is required", []}]}, reason: nil}
 
-      assert error(%{"genre" => "polka"}, opts) ==
-               %Engine.Error{inputs: %{"genre" => [{"is invalid", []}]}, reason: nil}
+      assert error(%{"style" => %{type: :text, value: "polka", operator: :contains}}, opts) ==
+               %Engine.Error{inputs: %{"style" => [{"is invalid", []}]}, reason: nil}
     end
 
     @tag :capture_log
@@ -165,6 +182,26 @@ defmodule Cinder.EngineRunTest do
 
   test "searches the searchable fields" do
     assert titles(run(%{search: "bl"})) == ["Blue"]
+  end
+
+  test "a custom search gets each searchable field's name and expression, and the text" do
+    test = self()
+
+    search_fn = fn query, fields, text ->
+      send(test, {:searched, Enum.map(fields, & &1.name), text})
+      %{expr: title} = Enum.find(fields, &(&1.name == "title"))
+      Ash.Query.filter(query, ^title == ^text)
+    end
+
+    fields =
+      fields(%{
+        "title" => %{searchable?: true},
+        "artist.name" => %{searchable?: true},
+        "price" => %{column?: true}
+      })
+
+    assert titles(run(%{search: "Blue"}, [search_fn: search_fn], fields)) == ["Blue"]
+    assert_received {:searched, ["artist.name", "title"], "Blue"}
   end
 
   test "loads what the columns need, and only the columns" do
