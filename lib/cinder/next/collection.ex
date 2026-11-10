@@ -23,7 +23,14 @@ defmodule Cinder.Next.Collection do
     # taken; the config is only rebuilt, and the records reloaded, when what's
     # declared changes. Only the fields that are columns have cells. Synced to the
     # URL (`url_params` isn't `nil`), a change to the URL's params is applied too.
-    declarations = Config.declarations(assigns.options, assigns.fields, assigns.arguments)
+    declarations =
+      Config.declarations(
+        assigns.options,
+        assigns.fields,
+        assigns.arguments,
+        assigns.bulk_actions
+      )
+
     columns = Enum.reject(assigns.fields, &(&1[:column] == false))
     url_params = assigns.options[:url_state][:params]
     old = socket.assigns
@@ -32,7 +39,9 @@ defmodule Cinder.Next.Collection do
 
     cond do
       declarations != old[:declarations] ->
-        config = Config.build(assigns.options, assigns.fields, assigns.arguments)
+        config =
+          Config.build(assigns.options, assigns.fields, assigns.arguments, assigns.bulk_actions)
+
         query = query(old, config, if(url_changed?, do: url_params))
 
         socket =
@@ -193,6 +202,10 @@ defmodule Cinder.Next.Collection do
     {:noreply, select(socket, selected)}
   end
 
+  def handle_event("clear_selection", _params, socket) do
+    {:noreply, select(socket, MapSet.new())}
+  end
+
   defp cursor(%{more?: true, last_cursor: cursor}, "next_page"), do: {:after, cursor}
   defp cursor(%{previous?: true, first_cursor: cursor}, "previous_page"), do: {:before, cursor}
   defp cursor(_page, _direction), do: nil
@@ -348,6 +361,13 @@ defmodule Cinder.Next.Collection do
           })}
         </div>
       </form>
+      <.bulk_bar
+        :if={@config.bulk_actions != []}
+        id={"#{@id}-bulk"}
+        bulk_actions={@config.bulk_actions}
+        count={MapSet.size(@selected)}
+        target={@myself}
+      />
       <table>
         <thead>
           <tr>
@@ -410,6 +430,26 @@ defmodule Cinder.Next.Collection do
         </button>
       </nav>
     </div>
+    """
+  end
+
+  # Always shown, so selecting doesn't move the records; the count and clearing
+  # appear once something's selected. Screen readers may not announce the count's
+  # first appearance (a live region is only reliable once it's there), but the
+  # selecting checkbox announces itself, and changes after that are announced.
+  defp bulk_bar(assigns) do
+    ~H"""
+    <section id={@id} aria-label={dgettext("cinder", "Bulk actions")}>
+      <div :if={@count > 0} id={"#{@id}-count"} aria-live="polite">
+        <p>{dgettext("cinder", "%{count} selected", count: @count)}</p>
+        <button type="button" phx-click="clear_selection" phx-target={@target}>
+          {dgettext("cinder", "Clear selection")}
+        </button>
+      </div>
+      <button :for={bulk_action <- @bulk_actions} type="button" disabled={@count == 0}>
+        {bulk_action.label}
+      </button>
+    </section>
     """
   end
 
