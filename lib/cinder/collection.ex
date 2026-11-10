@@ -466,7 +466,16 @@ defmodule Cinder.Collection do
         "Use Cinder.Controls helpers to render individual filters, search, and headers."
   )
 
-  slot(:loading, required: false, doc: "Custom loading state content")
+  (
+    slot(:row_detail,
+      required: false,
+      doc:
+        "Full-width table row beneath each item, hidden until Cinder.toggle_detail/2 is used. Receives the item via :let. Detail tables render keyed row pairs rather than stream rows."
+    )
+
+    slot(:loading, required: false, doc: "Custom loading state content")
+  )
+
   slot(:empty, required: false, doc: "Custom empty state content")
   slot(:error, required: false, doc: "Custom error state content")
 
@@ -600,6 +609,7 @@ defmodule Cinder.Collection do
       |> assign(:loading_slot, loading_slot)
       |> assign(:empty_slot, empty_slot)
       |> assign(:error_slot, error_slot)
+      |> assign(:row_detail_slot, Map.get(assigns, :row_detail, []))
       |> assign(:row_click, row_click)
       |> assign(:item_click, item_click)
       |> assign(:resolved_theme, resolved_theme)
@@ -633,6 +643,7 @@ defmodule Cinder.Collection do
         empty_message={@empty_message}
         error_message={@error_message}
         controls_slot={@controls_slot}
+        row_detail_slot={@row_detail_slot}
         loading_slot={@loading_slot}
         empty_slot={@empty_slot}
         error_slot={@error_slot}

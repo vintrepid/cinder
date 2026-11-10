@@ -148,4 +148,17 @@ defmodule Cinder do
       {:error, _} -> :ok
     end
   end
+
+  @doc "Returns the DOM id for an item's full-width row detail."
+  def detail_id(collection_id, item_id) do
+    collection_id <> "-detail-" <> Base.url_encode64(to_string(item_id), padding: false)
+  end
+
+  @doc "Toggles a row_detail slot from a button with aria-expanded and aria-controls."
+  def toggle_detail(collection_id, item_id) do
+    Phoenix.LiveView.JS.toggle_attribute({"hidden", ""},
+      to: "#" <> detail_id(collection_id, item_id)
+    )
+    |> Phoenix.LiveView.JS.toggle_attribute({"aria-expanded", "true", "false"})
+  end
 end

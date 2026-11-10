@@ -36,6 +36,8 @@ defmodule Cinder.Renderers.Table do
   Renders the table layout.
   """
   def render(assigns) do
+    assigns = assign_new(assigns, :row_detail_slot, fn -> [] end)
+
     ~H"""
     <div class={[@theme.container_class, "relative"]} data-key="container_class">
       <%= if Map.get(assigns, :sticky_toolbar, false) do %>
@@ -80,12 +82,18 @@ defmodule Cinder.Renderers.Table do
         <table class={@theme.table_class} data-key="table_class">
           <thead class={thead_class(assigns)} data-key="thead_class">
             <tr class={@theme.header_row_class} data-key="header_row_class">
-              <th :if={Selection.enabled?(@selectable)} class={[@theme.th_class, "w-10"]} data-key="th_class">
+              <th
+                :if={Selection.enabled?(@selectable)}
+                class={[@theme.th_class, "w-10"]}
+                data-key="th_class"
+              >
                 <input
                   id={"#{@id}-select-all-page"}
                   type="checkbox"
                   checked={all_page_selected?(@selected_ids, @data, @id_field, @selectable)}
-                  data-indeterminate={page_selection_indeterminate(@selected_ids, @data, @id_field, @selectable)}
+                  data-indeterminate={
+                    page_selection_indeterminate(@selected_ids, @data, @id_field, @selectable)
+                  }
                   phx-hook="CinderIndeterminateCheckbox"
                   phx-click="toggle_select_all_page"
                   phx-target={@myself}
@@ -93,16 +101,26 @@ defmodule Cinder.Renderers.Table do
                   data-key="selection_checkbox_class"
                 />
               </th>
-              <th :for={column <- @columns} class={[@theme.th_class, column.class]} data-key="th_class">
-                <div :if={column.sortable}
-                     class={["cursor-pointer select-none", (@show_loading_state && "opacity-75" || "")]}
-                     phx-click="toggle_sort"
-                     phx-value-key={column.field}
-                     phx-target={@myself}>
-                     {column.label}
-                     <span class={@theme.sort_indicator_class} data-key="sort_indicator_class">
-                       <SortIcon.sort_icon sort_direction={Cinder.QueryBuilder.get_sort_direction(@sort_by, column.field)} theme={@theme} loading={@show_loading_state} />
-                     </span>
+              <th
+                :for={column <- @columns}
+                class={[@theme.th_class, column.class]}
+                data-key="th_class"
+              >
+                <div
+                  :if={column.sortable}
+                  class={["cursor-pointer select-none", (@show_loading_state && "opacity-75") || ""]}
+                  phx-click="toggle_sort"
+                  phx-value-key={column.field}
+                  phx-target={@myself}
+                >
+                  {column.label}
+                  <span class={@theme.sort_indicator_class} data-key="sort_indicator_class">
+                    <SortIcon.sort_icon
+                      sort_direction={Cinder.QueryBuilder.get_sort_direction(@sort_by, column.field)}
+                      theme={@theme}
+                      loading={@show_loading_state}
+                    />
+                  </span>
                 </div>
                 <div :if={not column.sortable}>
                   {column.label}
@@ -110,53 +128,159 @@ defmodule Cinder.Renderers.Table do
               </th>
             </tr>
           </thead>
-          <tbody id={"#{@id}-stream"} phx-update="stream" class={[@theme.tbody_class, (@loading && "opacity-75" || "")]} data-key="tbody_class">
+          <tbody
+            id={"#{@id}-stream"}
+            phx-update={if has_slot?(assigns, :row_detail_slot), do: nil, else: "stream"}
+            class={[@theme.tbody_class, (@loading && "opacity-75") || ""]}
+            data-key="tbody_class"
+          >
             <!-- Stream rows: only changed items are patched -->
-            <%= if Map.has_key?(assigns, :streams) do %>
-              <tr
-                :for={{dom_id, item} <- @streams.data}
-                :if={not @error}
-                id={dom_id}
-                class={selection_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, Map.get(@theme, :selected_row_class))}
-                data-item-id={to_string(Map.get(item, @id_field))}
-                data-key="row_class"
-                phx-click={selection_click_action(@row_click, @selectable, @selected_ids, item, @id_field, @myself)}
-              >
-                <.data_cells
-                  item={item}
-                  selectable={@selectable}
-                  selected_ids={@selected_ids}
-                  id_field={@id_field}
-                  myself={@myself}
-                  theme={@theme}
-                  columns={@columns}
-                />
-              </tr>
-            <% else %>
-              <tr
-                :for={{dom_id, item} <- table_rows(assigns)}
-                :if={not @error}
-                id={dom_id}
-                class={selection_classes(@theme.row_class, Map.get(assigns, :item_class), @row_click, @selectable, @selected_ids, item, @id_field, Map.get(@theme, :selected_row_class))}
-                data-item-id={to_string(Map.get(item, @id_field))}
-                data-key="row_class"
-                phx-click={selection_click_action(@row_click, @selectable, @selected_ids, item, @id_field, @myself)}
-              >
-                <.data_cells
-                  item={item}
-                  selectable={@selectable}
-                  selected_ids={@selected_ids}
-                  id_field={@id_field}
-                  myself={@myself}
-                  theme={@theme}
-                  columns={@columns}
-                />
-              </tr>
+            <%= cond do %>
+              <% has_slot?(assigns, :row_detail_slot) -> %>
+                <%= for {dom_id, item} <- table_rows(assigns), not @error do %>
+                  <tr
+                    :if={not @error}
+                    id={dom_id}
+                    class={
+                      selection_classes(
+                        @theme.row_class,
+                        Map.get(assigns, :item_class),
+                        @row_click,
+                        @selectable,
+                        @selected_ids,
+                        item,
+                        @id_field,
+                        Map.get(@theme, :selected_row_class)
+                      )
+                    }
+                    data-item-id={to_string(Map.get(item, @id_field))}
+                    data-key="row_class"
+                    phx-click={
+                      selection_click_action(
+                        @row_click,
+                        @selectable,
+                        @selected_ids,
+                        item,
+                        @id_field,
+                        @myself
+                      )
+                    }
+                  >
+                    <.data_cells
+                      item={item}
+                      selectable={@selectable}
+                      selected_ids={@selected_ids}
+                      id_field={@id_field}
+                      myself={@myself}
+                      theme={@theme}
+                      columns={@columns}
+                    />
+                  </tr>
+                  <tr
+                    hidden
+                    id={Cinder.detail_id(@id, Map.fetch!(item, @id_field))}
+                    data-key="detail_row"
+                  >
+                    <td
+                      colspan={column_count(@columns, @selectable)}
+                      class={@theme.td_class}
+                      data-key="detail_cell"
+                    >
+                      <div style="white-space: normal; overflow-wrap: anywhere; min-width: 0">
+                        {render_slot(@row_detail_slot, item)}
+                      </div>
+                    </td>
+                  </tr>
+                <% end %>
+              <% Map.has_key?(assigns, :streams) -> %>
+                <tr
+                  :for={{dom_id, item} <- @streams.data}
+                  :if={not @error}
+                  id={dom_id}
+                  class={
+                    selection_classes(
+                      @theme.row_class,
+                      Map.get(assigns, :item_class),
+                      @row_click,
+                      @selectable,
+                      @selected_ids,
+                      item,
+                      @id_field,
+                      Map.get(@theme, :selected_row_class)
+                    )
+                  }
+                  data-item-id={to_string(Map.get(item, @id_field))}
+                  data-key="row_class"
+                  phx-click={
+                    selection_click_action(
+                      @row_click,
+                      @selectable,
+                      @selected_ids,
+                      item,
+                      @id_field,
+                      @myself
+                    )
+                  }
+                >
+                  <.data_cells
+                    item={item}
+                    selectable={@selectable}
+                    selected_ids={@selected_ids}
+                    id_field={@id_field}
+                    myself={@myself}
+                    theme={@theme}
+                    columns={@columns}
+                  />
+                </tr>
+              <% true -> %>
+                <tr
+                  :for={{dom_id, item} <- table_rows(assigns)}
+                  :if={not @error}
+                  id={dom_id}
+                  class={
+                    selection_classes(
+                      @theme.row_class,
+                      Map.get(assigns, :item_class),
+                      @row_click,
+                      @selectable,
+                      @selected_ids,
+                      item,
+                      @id_field,
+                      Map.get(@theme, :selected_row_class)
+                    )
+                  }
+                  data-item-id={to_string(Map.get(item, @id_field))}
+                  data-key="row_class"
+                  phx-click={
+                    selection_click_action(
+                      @row_click,
+                      @selectable,
+                      @selected_ids,
+                      item,
+                      @id_field,
+                      @myself
+                    )
+                  }
+                >
+                  <.data_cells
+                    item={item}
+                    selectable={@selectable}
+                    selected_ids={@selected_ids}
+                    id_field={@id_field}
+                    myself={@myself}
+                    theme={@theme}
+                    columns={@columns}
+                  />
+                </tr>
             <% end %>
           </tbody>
           <tbody :if={not @loading and not @error and @data == []}>
             <tr id={"#{@id}-empty"}>
-              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="empty_class">
+              <td
+                colspan={column_count(@columns, @selectable)}
+                class={@theme.empty_class}
+                data-key="empty_class"
+              >
                 <%= if has_slot?(assigns, :empty_slot) do %>
                   {render_slot(@empty_slot, empty_context(assigns))}
                 <% else %>
@@ -167,7 +291,11 @@ defmodule Cinder.Renderers.Table do
           </tbody>
           <tbody :if={@error and not @loading}>
             <tr id={"#{@id}-error"}>
-              <td colspan={column_count(@columns, @selectable)} class={@theme.empty_class} data-key="error_class">
+              <td
+                colspan={column_count(@columns, @selectable)}
+                class={@theme.empty_class}
+                data-key="error_class"
+              >
                 <%= if has_slot?(assigns, :error_slot) do %>
                   {render_slot(@error_slot)}
                 <% else %>
@@ -182,14 +310,39 @@ defmodule Cinder.Renderers.Table do
       </div>
 
       <!-- Loading indicator -->
-      <div :if={@show_loading_state} class={@theme.loading_overlay_class} data-key="loading_overlay_class">
+      <div
+        :if={@show_loading_state}
+        class={@theme.loading_overlay_class}
+        data-key="loading_overlay_class"
+      >
         <%= if has_slot?(assigns, :loading_slot) do %>
           {render_slot(@loading_slot)}
         <% else %>
           <div class={@theme.loading_container_class} data-key="loading_container_class">
-            <svg class={@theme.loading_spinner_class} data-key="loading_spinner_class" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class={@theme.loading_spinner_circle_class} data-key="loading_spinner_circle_class" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class={@theme.loading_spinner_path_class} data-key="loading_spinner_path_class" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            <svg
+              class={@theme.loading_spinner_class}
+              data-key="loading_spinner_class"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class={@theme.loading_spinner_circle_class}
+                data-key="loading_spinner_circle_class"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              >
+              </circle>
+              <path
+                class={@theme.loading_spinner_path_class}
+                data-key="loading_spinner_path_class"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              >
+              </path>
             </svg>
             {@loading_message}
           </div>
@@ -241,7 +394,13 @@ defmodule Cinder.Renderers.Table do
 
     ~H"""
     <div
-      class={Map.get(@theme, :table_toolbar_class, "sticky top-0 z-40 flex items-center gap-3 bg-white py-2")}
+      class={
+        Map.get(
+          @theme,
+          :table_toolbar_class,
+          "sticky top-0 z-40 flex items-center gap-3 bg-white py-2"
+        )
+      }
       data-key="table_toolbar_class"
     >
       <div :if={@show_filters} class="shrink-0" data-key="controls_class">

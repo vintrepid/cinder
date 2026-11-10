@@ -279,4 +279,33 @@ defmodule Cinder.Renderers.TableSelectionTest do
       refute html =~ ~r/<input[^>]*checked[^>]*phx-click="toggle_select_all_page"/
     end
   end
+
+  test "row details follow records and span the selection column as well" do
+    slot = %{__slot__: :row_detail, inner_block: fn _, item -> "Notes for " <> item.name end}
+
+    assigns =
+      Map.merge(base_assigns(), %{
+        selectable: true,
+        data: [%{id: "npm/foo@1", name: "First"}, %{id: "npm/bar@2", name: "Second"}],
+        row_detail_slot: [slot]
+      })
+
+    document = render_component(&TableRenderer.render/1, assigns) |> LazyHTML.from_fragment()
+    rows = document |> LazyHTML.query("tbody[data-key=tbody_class] > tr") |> Enum.to_list()
+    assert length(rows) == 4
+    assert LazyHTML.attribute(Enum.at(rows, 0), "data-item-id") == ["npm/foo@1"]
+
+    assert LazyHTML.attribute(Enum.at(rows, 1), "id") == [
+             Cinder.detail_id("test-table", "npm/foo@1")
+           ]
+
+    assert Enum.at(rows, 1) |> LazyHTML.query("td[colspan='2']") |> LazyHTML.text() =~
+             "Notes for First"
+
+    assert document |> LazyHTML.query("tr[data-key=detail_row][hidden]") |> Enum.count() == 2
+
+    assert document
+           |> LazyHTML.query("tbody[data-key=tbody_class]")
+           |> LazyHTML.attribute("phx-update") == []
+  end
 end
