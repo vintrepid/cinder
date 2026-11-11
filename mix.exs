@@ -59,7 +59,7 @@ defmodule Cinder.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.37 and >= 3.37.3"},
+      {:ash, "~> 3.37 and >= 3.37.4"},
       {:ash_sql, ">= 0.6.3", optional: true},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:ash_phoenix, "~> 2.3 and >= 2.3.26"},
@@ -80,7 +80,7 @@ defmodule Cinder.MixProject do
       {:ex_check, "~> 0.17.1", only: [:dev], runtime: false},
       {:credo, "~> 1.7 and >= 1.7.19", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.18.1", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4 and >= 1.4.8", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4 and >= 1.4.9", only: [:dev, :test], runtime: false}
     ]
   end
 
