@@ -34,6 +34,7 @@ defmodule Cinder.Next.Config do
     :scope,
     :primary_key,
     :on_selection_change,
+    :on_bulk_action_result,
     selectable: false,
     columns: [],
     fields: [],
@@ -86,6 +87,7 @@ defmodule Cinder.Next.Config do
       selectable: options[:selectable],
       primary_key: primary_key!(source, options),
       on_selection_change: options[:on_selection_change],
+      on_bulk_action_result: options[:on_bulk_action_result],
       bulk_actions: bulk_actions!(source, bulk_action_slots, options),
       sort: %{
         mode: options[:sort][:mode] || :additive,
@@ -174,15 +176,40 @@ defmodule Cinder.Next.Config do
 
     case Engine.bulk_action(source, action) do
       {:ok, bulk_action} ->
+        action_opts = attributes[:action_opts] || []
+        check_action_opts!(action_opts, Engine.bulk_action_opts(bulk_action), declaration)
+
         %{
           name: name,
           label: attributes[:label] || humanize(name),
           confirm: attributes[:confirm],
-          action: bulk_action
+          action: bulk_action,
+          action_opts: action_opts
         }
 
       {:error, message} ->
         raise ArgumentError, "#{declaration}: #{message}"
+    end
+  end
+
+  # Checking fills in Ash's defaults, which are Ash's to apply, so the options are
+  # only checked, and kept as given
+  defp check_action_opts!(_action_opts, nil, _declaration), do: :ok
+
+  defp check_action_opts!(action_opts, schema, declaration) do
+    # The schema would only call these unknown
+    case Enum.find(Keyword.keys(action_opts), &(&1 in [:actor, :tenant, :scope])) do
+      nil ->
+        :ok
+
+      key ->
+        raise ArgumentError,
+              "#{declaration}: give `#{key}` as the collection's own attribute, not in `action_opts`"
+    end
+
+    case Spark.Options.validate(action_opts, schema) do
+      {:ok, _validated} -> :ok
+      {:error, error} -> raise ArgumentError, "#{declaration}: #{Exception.message(error)}"
     end
   end
 
@@ -198,6 +225,8 @@ defmodule Cinder.Next.Config do
 
   # Each argument with its input's label
   defp arguments!(source, action, argument_slots, declared) do
+    Enum.each(argument_slots, &argument_without_content!/1)
+
     argument_slots
     |> Enum.map(&Schema.validate_argument!/1)
     |> tap(&arguments_once!/1)
@@ -237,6 +266,17 @@ defmodule Cinder.Next.Config do
 
       Map.put(taken, param, ~s(<:argument name="#{name}">) <> shared)
     end)
+  end
+
+  # Content would be ignored, and as a new closure on every render, would rebuild
+  # the config
+  defp argument_without_content!(slot) do
+    if slot[:inner_block] do
+      raise ArgumentError,
+            ~s(<:argument name="#{slot[:name]}"> takes no content: give its input with ) <>
+              ~s(`input`, as in <:argument name="#{slot[:name]}" ) <>
+              ~s(input={[label: "#{humanize(slot[:name])}"]} />)
+    end
   end
 
   defp arguments_once!(arguments) do

@@ -597,19 +597,22 @@ defmodule Cinder.Next.ConfigTest do
                  name: "remaster",
                  label: "Remaster",
                  confirm: nil,
-                 action: %Cinder.Engine.BulkAction{action: :remaster, type: :update}
+                 action: %Cinder.Engine.BulkAction{action: :remaster, type: :update},
+                 action_opts: []
                },
                %{
                  name: "destroy",
                  label: "Delete",
                  confirm: "Delete {count} albums?",
-                 action: %Cinder.Engine.BulkAction{action: :destroy, type: :destroy}
+                 action: %Cinder.Engine.BulkAction{action: :destroy, type: :destroy},
+                 action_opts: []
                },
                %{
                  name: "export_csv",
                  label: "Export Csv",
                  confirm: nil,
-                 action: %Cinder.Engine.BulkAction{action: export, type: nil}
+                 action: %Cinder.Engine.BulkAction{action: export, type: nil},
+                 action_opts: []
                }
              ]
     end
@@ -669,6 +672,39 @@ defmodule Cinder.Next.ConfigTest do
                      "expected string, got: true",
                    fn -> bulk_actions([bulk_action(action: :destroy, confirm: true)]) end
     end
+
+    # Only those given are kept: the defaults are Ash's to apply
+    test "`action_opts` are Ash's bulk options for an update or destroy, and anything for a function" do
+      export = fn query, _opts -> {:ok, query} end
+
+      assert [remaster, destroy, exporting] =
+               bulk_actions([
+                 bulk_action(action: :remaster, action_opts: [batch_size: 10]),
+                 bulk_action(action: :destroy, action_opts: [return_errors?: false]),
+                 bulk_action(action: export, name: "export", action_opts: [format: :csv])
+               ])
+
+      assert remaster.action_opts == [batch_size: 10]
+      assert destroy.action_opts == [return_errors?: false]
+      assert exporting.action_opts == [format: :csv]
+    end
+
+    # Found at mount, not when a user runs it. The message ends with Ash's list of
+    # bulk options, which grows with Ash.
+    test "an option an update or destroy doesn't take is an error" do
+      assert_raise ArgumentError,
+                   ~r/^<:bulk_action name="remaster">: unknown options \[:nope\], valid options are: \[/,
+                   fn ->
+                     bulk_actions([bulk_action(action: :remaster, action_opts: [nope: 1])])
+                   end
+
+      assert_raise ArgumentError,
+                   ~s(<:bulk_action name="destroy">: give `actor` as the collection's own ) <>
+                     "attribute, not in `action_opts`",
+                   fn ->
+                     bulk_actions([bulk_action(action: :destroy, action_opts: [actor: 1])])
+                   end
+    end
   end
 
   describe "arguments" do
@@ -704,6 +740,18 @@ defmodule Cinder.Next.ConfigTest do
       assert_raise ArgumentError,
                    ~s("nope" is not an argument of Music.Album's :by_genre action),
                    fn -> build([field("title")], @by_genre, [argument("nope")]) end
+    end
+
+    # It'd be ignored, and as a new closure on every render, would rebuild the config
+    test "content is an error, as its input is given with `input`" do
+      assert_raise ArgumentError,
+                   ~s(<:argument name="genre"> takes no content: give its input with `input`, ) <>
+                     ~s(as in <:argument name="genre" input={[label: "Genre"]} />),
+                   fn ->
+                     build([field("title")], @by_genre, [
+                       argument("genre", inner_block: fn _changed, _arg -> "" end)
+                     ])
+                   end
     end
 
     test "an argument declared twice is an error" do

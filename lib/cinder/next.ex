@@ -46,6 +46,10 @@ defmodule Cinder.Next do
     default: nil,
     doc: "A message to send the LiveView when the selection changes"
 
+  attr :on_bulk_action_result, :atom,
+    default: nil,
+    doc: "A message to send the LiveView when a bulk action has run"
+
   slot :field,
     required: true,
     doc: "A field, shown as a column with its content for each record" do
@@ -64,7 +68,10 @@ defmodule Cinder.Next do
     attr :search, :boolean, doc: "Search the field from the search box"
   end
 
-  slot :argument, doc: "A read action argument, with an input for its value" do
+  slot :argument,
+    doc:
+      "A read action argument, with an input for its value. Unlike a filter's, a new " <>
+        "value clears the selection, as it changes what the action reads." do
     attr :name, :string, required: true
     attr :param, :string, doc: "What it goes by in the form and the URL, if not its name"
 
@@ -80,6 +87,9 @@ defmodule Cinder.Next do
     attr :name, :string, doc: "What it goes by in events. Defaults to the action's name."
     attr :label, :string, doc: "Its button's text. Defaults to the humanised name."
     attr :confirm, :string, doc: "A question to confirm before it runs, with `{count}`"
+
+    attr :action_opts, :list,
+      doc: "More options for the action: Ash's bulk update or destroy options, or the function's"
   end
 
   # Runs on every parent render, so it only hands everything on: the collection

@@ -96,6 +96,16 @@ defmodule Cinder.Next.Schema do
       doc:
         "A message to send the LiveView when the selection changes: " <>
           "`{name, %{selected_ids:, selected_count:, component_id:}}`."
+    ],
+    on_bulk_action_result: [
+      type: :atom,
+      doc:
+        "A message to send the LiveView when a bulk action has run: " <>
+          "`{name, %{bulk_action:, status:, selected_count:, result:, errors:, component_id:}}`. " <>
+          "`status` is `:success`, `:partial_success` (some records failed, and the rest " <>
+          "changed) or `:error`. `selected_count` is how many records were selected: one the " <>
+          "read no longer reaches is skipped, so for how many changed, give the action " <>
+          "`action_opts={[return_records?: true]}` and count `result.records`."
     ]
   ]
 
@@ -178,6 +188,13 @@ defmodule Cinder.Next.Schema do
     confirm: [
       type: :string,
       doc: "A question to confirm before it runs. `{count}` is how many records are selected."
+    ],
+    action_opts: [
+      type: :keyword_list,
+      doc:
+        "More options to run it with: `Ash.bulk_update/4`'s or `Ash.bulk_destroy/4`'s for " <>
+          "an update or destroy action, and a function gets them as `bulk_options`, as a " <>
+          "code interface takes them."
     ]
   ]
 
