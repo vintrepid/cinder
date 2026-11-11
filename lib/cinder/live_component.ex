@@ -167,7 +167,9 @@ defmodule Cinder.LiveComponent do
 
   def update(assigns, socket) do
     assigns =
-      if assigns[:url_auto] && not Cinder.UrlSync.enabled_for?(socket.view) do
+      if assigns[:url_auto] &&
+           (not Cinder.UrlSync.enabled_for?(socket.view) or
+              assigns[:on_state_change] != :table_state_change) do
         handler =
           if assigns[:on_state_change] == :table_state_change,
             do: nil,
@@ -175,7 +177,7 @@ defmodule Cinder.LiveComponent do
 
         assigns
         |> Map.put(:url_auto, false)
-        |> Map.put(:url_sync, not is_nil(handler))
+        |> Map.put(:url_sync, false)
         |> Map.put(:on_state_change, handler)
       else
         assigns
