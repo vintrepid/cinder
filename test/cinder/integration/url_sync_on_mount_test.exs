@@ -26,7 +26,7 @@ defmodule Cinder.Integration.UrlSyncOnMountTest do
       Cinder.TestLive.Fixture.register(fn assigns ->
         ~H"""
         <p id="tab">{assigns[:tab]}</p>
-        <Cinder.collection resource={Music.Album} url_state={@url_state}>
+        <Cinder.collection resource={Music.Album}>
           <:col :let={album} field="title" sort>{album.title}</:col>
         </Cinder.collection>
         """
