@@ -181,7 +181,7 @@ defmodule Cinder.Collection do
   )
 
   attr(:url_state, :any,
-    default: false,
+    default: :auto,
     doc:
       "`@url_state`, assigned by `use Cinder.UrlSync`, to keep the collection's state in the URL"
   )
@@ -486,7 +486,7 @@ defmodule Cinder.Collection do
       |> assign_new(:layout, fn -> :table end)
       |> assign_new(:page_size, fn -> Cinder.PageSize.get_default_page_size() end)
       |> assign_new(:theme, fn -> "default" end)
-      |> assign_new(:url_state, fn -> false end)
+      |> assign_new(:url_state, fn -> :auto end)
       |> assign_new(:query_opts, fn -> [] end)
       |> assign(:initial_load, determine_initial_load(assigns))
       |> assign_new(:on_state_change, fn -> nil end)
@@ -629,7 +629,8 @@ defmodule Cinder.Collection do
         page_size_config={@page_size_config}
         theme={@resolved_theme}
         url_raw_params={get_raw_url_params(@url_state)}
-        url_sync={is_map(@url_state)}
+        url_sync={@url_state == :auto or is_map(@url_state)}
+        url_auto={@url_state == :auto}
         query_opts={@query_opts}
         initial_load={@initial_load}
         on_state_change={get_state_change_handler(@url_state, @on_state_change, @id)}
@@ -1348,6 +1349,9 @@ defmodule Cinder.Collection do
        when is_map(url_state) do
     custom_handler || :table_state_change
   end
+
+  defp get_state_change_handler(:auto, custom_handler, _component_id),
+    do: custom_handler || :table_state_change
 
   defp get_state_change_handler(_url_state, custom_handler, _component_id), do: custom_handler
 

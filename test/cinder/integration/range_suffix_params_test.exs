@@ -40,7 +40,9 @@ defmodule Cinder.Integration.RangeSuffixParamsTest do
   """
   use Cinder.ConnCase, async: false
   import Phoenix.ConnTest, only: [get: 2]
-  import Phoenix.LiveViewTest, only: [live: 2, element: 2, render_change: 2]
+
+  import Phoenix.LiveViewTest,
+    only: [live: 2, element: 2, render_change: 2, render: 1, assert_patch: 1]
 
   alias Cinder.Integration.RangeSuffixParamsTest.Shipment
 
@@ -92,10 +94,12 @@ defmodule Cinder.Integration.RangeSuffixParamsTest do
     test "#{name} filters from the form", %{conn: conn, path: path} do
       {:ok, view, _html} = live(conn, path)
 
-      html =
-        view
-        |> element("form[phx-change=filter_change]")
-        |> render_change(%{"filters" => unquote(Macro.escape(params))})
+      view
+      |> element("form[phx-change=filter_change]")
+      |> render_change(%{"filters" => unquote(Macro.escape(params))})
+
+      assert_patch(view)
+      html = render(view)
 
       assert html =~ unquote(shown)
       refute html =~ unquote(hidden)

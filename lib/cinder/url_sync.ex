@@ -64,6 +64,16 @@ defmodule Cinder.UrlSync do
 
   import Phoenix.Component, only: [assign: 3]
 
+  @doc false
+  def enabled_for?(view) do
+    if is_atom(view) and function_exported?(view, :__live__, 0) do
+      view.__live__().lifecycle.mount
+      |> Enum.any?(fn hook -> match?({__MODULE__, _}, hook.id) end)
+    else
+      false
+    end
+  end
+
   @doc """
   Adds URL sync to a LiveView. It must come after `use Phoenix.LiveView` (or
   `use MyAppWeb, :live_view`).
@@ -127,6 +137,13 @@ defmodule Cinder.UrlSync do
   defp params_hook(params, uri, socket) do
     socket = handle_params(params, uri, socket)
 
+    for id <- socket.assigns[:cinder_auto_collections] || [] do
+      Phoenix.LiveView.send_update(Cinder.LiveComponent,
+        id: id,
+        url_raw_params: socket.assigns.url_state.filters
+      )
+    end
+
     if function_exported?(socket.view, :handle_params, 3),
       do: {:cont, socket},
       else: {:halt, socket}
@@ -141,6 +158,17 @@ defmodule Cinder.UrlSync do
   defp info_hook({:cinder_url_patch, params, owns}, socket) do
     uri = get_in(socket.assigns, [:url_state, :uri]) || "/"
     {:halt, Phoenix.LiveView.push_patch(socket, to: patched_url(uri, params, owns))}
+  end
+
+  defp info_hook({:cinder_register_url_state, id}, socket) do
+    ids = Enum.uniq([id | socket.assigns[:cinder_auto_collections] || []])
+
+    Phoenix.LiveView.send_update(Cinder.LiveComponent,
+      id: id,
+      url_raw_params: socket.assigns.url_state.filters
+    )
+
+    {:halt, assign(socket, :cinder_auto_collections, ids)}
   end
 
   defp info_hook(_message, socket), do: {:cont, socket}

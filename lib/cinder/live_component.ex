@@ -166,6 +166,33 @@ defmodule Cinder.LiveComponent do
   end
 
   def update(assigns, socket) do
+    assigns =
+      if assigns[:url_auto] &&
+           (not Cinder.UrlSync.enabled_for?(socket.view) or
+              assigns[:on_state_change] != :table_state_change) do
+        handler =
+          if assigns[:on_state_change] == :table_state_change,
+            do: nil,
+            else: assigns[:on_state_change]
+
+        assigns
+        |> Map.put(:url_auto, false)
+        |> Map.put(:url_sync, false)
+        |> Map.put(:on_state_change, handler)
+      else
+        assigns
+      end
+
+    assigns =
+      if assigns[:url_auto] && socket.assigns[:url_auto_registered],
+        do: Map.delete(assigns, :url_raw_params),
+        else: assigns
+
+    if assigns[:url_auto] && socket.assigns[:url_auto_registered] != true do
+      send(self(), {:cinder_register_url_state, assigns.id})
+    end
+
+    socket = if assigns[:url_auto], do: assign(socket, :url_auto_registered, true), else: socket
     prev_state = data_state(socket.assigns)
     initialize_selection? = not Map.has_key?(socket.assigns, :selected_ids)
 
