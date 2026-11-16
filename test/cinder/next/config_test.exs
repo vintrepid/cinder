@@ -73,6 +73,18 @@ defmodule Cinder.Next.ConfigTest do
                  end
   end
 
+  test "a bulk action confirm that isn't a function component is an error" do
+    assert_raise ArgumentError,
+                 ~s(<Cinder.Next.collection id="albums">: invalid value for :bulk_action_confirm option: expected function of arity 1, got: function of arity {:arity, 2}),
+                 fn ->
+                   build([field("title")],
+                     id: "albums",
+                     resource: Music.Album,
+                     bulk_action_confirm: &Map.get/2
+                   )
+                 end
+  end
+
   test "a column with no content is an error" do
     assert_raise ArgumentError,
                  ~s(<:field name="title"> needs content, such as <:field :let={record} name="title">{record.title}</:field>),
@@ -442,29 +454,133 @@ defmodule Cinder.Next.ConfigTest do
     end
   end
 
+  describe "the first read" do
+    defp initial_load(value) do
+      build([field("title")], id: "albums", resource: Music.Album, initial_load: value)
+    end
+
+    # The app's default (`config :cinder, default_initial_load:`) is tested with the
+    # collection, as application env is global and these tests are async
+    test "is after the page renders, unless the collection reads it first" do
+      assert build([field("title")]).initial_load == :async
+      assert initial_load(:sync).initial_load == :sync
+      assert initial_load("sync").initial_load == :sync
+    end
+
+    test "anything else is an error" do
+      assert_raise ArgumentError,
+                   ~s(<Cinder.Next.collection id="albums">: invalid value for :initial_load ) <>
+                     "option: expected one of [:async, :sync], got: :later",
+                   fn -> initial_load(:later) end
+    end
+  end
+
+  # On a rebuild, given the same query: if the records are the same, the page and the
+  # selection can stay
+  describe "same_records?/2" do
+    defp albums(options \\ [], bulk_actions \\ []) do
+      fields = [field("title", search: true, label: options[:label])]
+      options = [id: "albums", resource: Music.Album] ++ Keyword.delete(options, :label)
+      build(fields, options, [], bulk_actions)
+    end
+
+    defp search_fn(query, _fields, _text), do: query
+
+    test "what's read, who reads it, and how it searches and pages count" do
+      old = albums()
+
+      for options <- [
+            [action: :paginated],
+            [actor: %{name: "A"}],
+            [tenant: "t"],
+            [scope: %{actor: %{name: "Scope"}}],
+            [query_opts: [timeout: 5_000]],
+            [search: [fn: &search_fn/3]],
+            [pagination: [mode: :keyset]]
+          ] do
+        refute Config.same_records?(old, albums(options)), inspect(options)
+      end
+
+      sorted =
+        build([field("title", search: true)],
+          id: "albums",
+          query: Ash.Query.sort(Music.Album, :title)
+        )
+
+      refute Config.same_records?(old, sorted)
+    end
+
+    # A function written in the template is new each time the parent renders, so a
+    # bulk action's or `selectable` can't count; the search function's does (see
+    # `Cinder.Next.collection/1`'s docs)
+    test "labels, page size, `selectable` and bulk action functions don't" do
+      old =
+        albums([selectable: fn _ -> true end], [
+          bulk_action(name: "a", action: fn _, _ -> :ok end)
+        ])
+
+      new =
+        albums(
+          [label: "Name", pagination: [size: 10], selectable: fn _ -> true end],
+          [bulk_action(name: "a", action: fn _, _ -> :ok end)]
+        )
+
+      assert Config.same_records?(old, new)
+    end
+  end
+
   describe "pagination" do
     defp pagination(source, pagination) do
       build([field("title")], id: "albums", query: source, pagination: pagination).pagination
     end
 
     test "by offset, 25 records a page, counted, unless the size is given" do
-      assert build([field("title")]).pagination == %{mode: :offset, size: 25, count?: true}
+      assert build([field("title")]).pagination ==
+               %{mode: :offset, size: 25, size_options: [25], count?: true}
 
       assert pagination(Ash.Query.new(Music.Album), size: 10) ==
-               %{mode: :offset, size: 10, count?: true}
+               %{mode: :offset, size: 10, size_options: [10], count?: true}
+    end
+
+    test "the sizes the user can choose from, as given" do
+      assert pagination(Ash.Query.new(Music.Album), size: 25, size_options: [50, 10, 25]) ==
+               %{mode: :offset, size: 25, size_options: [50, 10, 25], count?: true}
+    end
+
+    test "a size that isn't one of the size options is an error" do
+      assert_raise ArgumentError,
+                   ~s(<Cinder.Next.collection id="albums">: `pagination`'s `size` \(25\) ) <>
+                     "must be one of its `size_options` ([10, 50])",
+                   fn -> pagination(Ash.Query.new(Music.Album), size_options: [10, 50]) end
+    end
+
+    test "size options that aren't positive integers are an error" do
+      assert_raise ArgumentError,
+                   ~s(<Cinder.Next.collection id="albums">: invalid list in :size_options option: ) <>
+                     "invalid value for list element at position 1: " <>
+                     "expected positive integer, got: 0 (in options [:pagination])",
+                   fn ->
+                     pagination(Ash.Query.new(Music.Album), size: 25, size_options: [25, 0])
+                   end
     end
 
     test "an action that can't count pages without a count" do
       query = Ash.Query.for_read(Music.Album, :uncountable)
-      assert pagination(query, []) == %{mode: :offset, size: 25, count?: false}
+
+      assert pagination(query, []) == %{
+               mode: :offset,
+               size: 25,
+               size_options: [25],
+               count?: false
+             }
     end
 
     test "by keyset when asked, or when the action only pages that way, without a count" do
       assert pagination(Ash.Query.new(Music.Album), mode: :keyset) ==
-               %{mode: :keyset, size: 25, count?: false}
+               %{mode: :keyset, size: 25, size_options: [25], count?: false}
 
       assert pagination(Ash.Query.for_read(Music.Album, :keyset_only), []) ==
-               %{mode: :keyset, size: 25, count?: false}
+               %{mode: :keyset, size: 25, size_options: [25], count?: false}
     end
 
     test "a mode the action can't page by is an error" do
@@ -523,7 +639,7 @@ defmodule Cinder.Next.ConfigTest do
 
     test "pagination is the `action`'s" do
       config = build([field("title")], id: "albums", resource: Music.Album, action: :keyset_only)
-      assert config.pagination == %{mode: :keyset, size: 25, count?: false}
+      assert config.pagination == %{mode: :keyset, size: 25, size_options: [25], count?: false}
     end
 
     test "an action that isn't one of the resource's reads is an error" do

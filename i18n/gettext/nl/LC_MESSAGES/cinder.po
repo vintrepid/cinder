@@ -122,6 +122,7 @@ msgstr "Min"
 msgid "Search %{label}..."
 msgstr "Zoek %{label}..."
 
+#: lib/cinder/next/collection.ex
 #: lib/cinder/renderers/pagination.ex
 #, elixir-autogen, elixir-format
 msgid "Show {selector} per page"
@@ -163,6 +164,7 @@ msgid "Clear search"
 msgstr "Zoekopdracht wissen"
 
 #: lib/cinder/collection.ex
+#: lib/cinder/next/collection.ex
 #, elixir-autogen, elixir-format
 msgid "Loading..."
 msgstr "Laden..."
@@ -230,3 +232,22 @@ msgstr "Bulkacties"
 #, elixir-autogen, elixir-format
 msgid "Clear selection"
 msgstr "Selectie wissen"
+
+#: lib/cinder/next/collection.ex
+#, elixir-autogen, elixir-format
+msgid "Cancel"
+msgstr "Annuleren"
+
+#: lib/cinder/next/collection.ex
+#, elixir-autogen, elixir-format
+msgid "All %{count} selected"
+msgid_plural "All %{count} selected"
+msgstr[0] "Alle %{count} geselecteerd"
+msgstr[1] "Alle %{count} geselecteerd"
+
+#: lib/cinder/next/collection.ex
+#, elixir-autogen, elixir-format
+msgid "Select all %{count} matching"
+msgid_plural "Select all %{count} matching"
+msgstr[0] "Alle %{count} resultaten selecteren"
+msgstr[1] "Alle %{count} resultaten selecteren"

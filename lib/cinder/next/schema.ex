@@ -4,8 +4,8 @@
 
 defmodule Cinder.Next.Schema do
   @moduledoc false
-  # What each of a collection's options is: its type, whether it's required, and its
-  # docs, as `Spark.Options` schemas. Only each option on its own: rules about
+  # What each of a collection's options is: its type, whether it's required, and a
+  # line on it, as `Spark.Options` schemas. The public docs are `Cinder.Next`'s. Only each option on its own: rules about
   # several options together are `Cinder.Next.Config`'s. Errors name the declaration
   # they're about.
 
@@ -51,14 +51,7 @@ defmodule Cinder.Next.Schema do
              type: :string,
              doc: "The search box's placeholder. Defaults to \"Search...\"."
            ],
-           fn: [
-             type: {:fun, 3},
-             doc:
-               "Searches instead of a case-insensitive `contains` on each searchable field: " <>
-                 "called with the `Ash.Query`, the searchable fields " <>
-                 "(`%{name: \"artist.name\", expr: <Ash expression>}`), and the text. " <>
-                 "Returns the query."
-           ]
+           fn: [type: {:fun, 3}, doc: "Searches instead of a `contains` on each field."]
          ]},
       default: [],
       doc: "How the collection searches. It has a search box if any field is searchable."
@@ -71,12 +64,24 @@ defmodule Cinder.Next.Schema do
              type: {:in, [:offset, :keyset]},
              doc: "`:offset` or `:keyset`. By default, offset if the read action can, or keyset."
            ],
-           size: [type: :pos_integer, default: 25, doc: "How many records a page shows."]
+           size: [type: :pos_integer, default: 25, doc: "How many records a page shows."],
+           size_options: [
+             type: {:list, :pos_integer},
+             doc: "The sizes the user can choose from, `size` among them."
+           ]
          ]},
       default: [],
       doc:
         "How the collection pages, if the read action can. " <>
           "Giving this for an action that can't page that way is an error."
+    ],
+    initial_load: [
+      type: {:custom, __MODULE__, :one_of, [[:async, :sync]]},
+      default: :async,
+      doc:
+        "When the first page is read: `:async`, after the page renders, or `:sync`, " <>
+          "before, so it's in the page's HTML. Defaults to " <>
+          "`config :cinder, default_initial_load:`, or `:async`."
     ],
     url_state: [
       type: {:or, [nil, :map]},
@@ -93,19 +98,15 @@ defmodule Cinder.Next.Schema do
     ],
     on_selection_change: [
       type: :atom,
-      doc:
-        "A message to send the LiveView when the selection changes: " <>
-          "`{name, %{selected_ids:, selected_count:, component_id:}}`."
+      doc: "A message to send the LiveView when the selection changes."
     ],
     on_bulk_action_result: [
       type: :atom,
-      doc:
-        "A message to send the LiveView when a bulk action has run: " <>
-          "`{name, %{bulk_action:, status:, selected_count:, result:, errors:, component_id:}}`. " <>
-          "`status` is `:success`, `:partial_success` (some records failed, and the rest " <>
-          "changed) or `:error`. `selected_count` is how many records were selected: one the " <>
-          "read no longer reaches is skipped, so for how many changed, give the action " <>
-          "`action_opts={[return_records?: true]}` and count `result.records`."
+      doc: "A message to send the LiveView when a bulk action has run."
+    ],
+    bulk_action_confirm: [
+      type: {:fun, 1},
+      doc: "A function component asking the user to confirm a bulk action."
     ]
   ]
 
@@ -215,6 +216,17 @@ defmodule Cinder.Next.Schema do
     |> Keyword.replace(:query_opts, options[:query_opts])
   end
 
+  @doc """
+  A Spark custom type, like `{:in, choices}` for a list of atoms, that also takes
+  each atom's string: `initial_load="sync"` as well as `initial_load={:sync}`.
+  """
+  def one_of(value, choices) do
+    case Enum.find(choices, &(&1 == value or Atom.to_string(&1) == value)) do
+      nil -> {:error, "expected one of #{inspect(choices)}, got: #{inspect(value)}"}
+      choice -> {:ok, choice}
+    end
+  end
+
   # Before the schema, which would only call these unknown: `select`, and the
   # collection's own attributes (such as `actor` and `tenant`)
   defp check_query_opts!(query_opts, declaration) do
@@ -301,7 +313,7 @@ defmodule Cinder.Next.Schema do
   defp shorthand({key, false}) when key in [:sort, :filter], do: []
   defp shorthand(attribute), do: [attribute]
 
-  # Unset attrs arrive as `nil`, which means "not given"
+  # An attr given as `nil` means "not given"
   defp validate!(options, schema, declaration) do
     options = Enum.reject(options, fn {_key, value} -> is_nil(value) end)
 

@@ -4,10 +4,48 @@
 
 defmodule Cinder.Next.State do
   @moduledoc false
-  # How a collection's state changes as the user works with it, as pure functions.
-  # For now its state is a `Cinder.Engine.Query` and the selected ids (a `MapSet` of
-  # the strings the boxes carry), kept apart; once there's more state that isn't
-  # query (layout, hidden columns), this becomes the struct holding it all.
+  # How a collection's state changes as the user works with it, and how it's read
+  # from and written to the URL, as pure functions. For now its state is a
+  # `Cinder.Engine.Query`; once there's more state that isn't query (layout, hidden
+  # columns), this becomes the struct holding it all. The selection is
+  # `Cinder.Next.RowSelection`'s. The URL is here, not in `Cinder.Params` (which turns
+  # the query's strings into values), because that state goes in the URL too.
+
+  alias Cinder.Engine.{Argument, Field, Page, Query}
+  alias Cinder.Next.Config
+  alias Cinder.Params
+
+  @doc "The query a new collection starts with: the default sort, on the first page."
+  def start(%Config{} = config) do
+    %Query{sort: config.sort.default, page_size: config.pagination[:size]}
+  end
+
+  @doc """
+  The query a URL's params ask for, from what the collection was started with.
+  Anything in them the collection can't use is left out: the URL is the user's to
+  edit.
+  """
+  def from_url(params, %Config{} = config) do
+    opts = [
+      search?: config.search != nil,
+      pagination: config.pagination[:mode],
+      arguments: config.arguments,
+      sort_mode: config.sort.mode,
+      page_sizes: config.pagination[:size_options]
+    ]
+
+    Params.from_url(params, config.fields, start(config), opts)
+  end
+
+  @doc "The query as URL params, leaving out whatever is as the collection started."
+  def to_url(query, %Config{} = config) do
+    Params.to_url(query, config.fields, start(config), arguments: config.arguments)
+  end
+
+  @doc "Every URL param the collection may write, so the URL's other params are kept."
+  def url_keys(%Config{} = config) do
+    Params.url_keys(config.fields, arguments: config.arguments)
+  end
 
   @doc """
   The sort after clicking `field`, whose sort cycles through `cycle`. Additive
@@ -37,11 +75,49 @@ defmodule Cinder.Next.State do
   end
 
   @doc """
-  The sort to keep when the declarations change: the new default if the user
-  hadn't changed it from the old one, or else theirs, minus fields that are no
-  longer sortable.
+  The query after choosing a page size (the form's string), on the first page. One
+  that isn't offered (from a tampered event), or is the size shown, is ignored.
   """
-  def carry_over_sort(sort, old_default, new_default, sortable) do
+  def change_page_size(query, size, %Config{} = config) do
+    with %{size_options: options} <- config.pagination,
+         {size, ""} <- Integer.parse(size),
+         true <- size in options and size != query.page_size do
+      {:ok, first_page(%{query | page_size: size})}
+    else
+      _ignored -> :ignore
+    end
+  end
+
+  @doc """
+  The query when the declarations change from `old` to `config`. The user's sort,
+  filters, argument values, search and page size carry over, minus what's no longer
+  declared or offered, though a sort or a page size the user hadn't changed from the
+  old default becomes the new one. The page carries over too, if the records are the
+  same (`same_records?`) and nothing else changed, and otherwise it's the first.
+  """
+  def carry_over(query, %Config{} = old, %Config{} = config, same_records?) do
+    sortable = for %Field{sortable?: true, name: name} <- config.fields, do: name
+    filterable = for %{column: column} <- config.filters, do: column.field
+    searchable? = Enum.any?(config.fields, & &1.searchable?)
+    arguments = for %Argument{param: param} <- config.arguments, do: param
+
+    carried = %{
+      query
+      | sort: carry_over_sort(query.sort, old.sort.default, config.sort.default, sortable),
+        filters: Map.take(query.filters, filterable),
+        arguments: Map.take(query.arguments, arguments),
+        search: if(searchable?, do: query.search, else: ""),
+        page_size: carry_over_page_size(query.page_size, old.pagination, config.pagination)
+    }
+
+    if same_records? and first_page(carried) == first_page(query) do
+      carried
+    else
+      first_page(carried)
+    end
+  end
+
+  defp carry_over_sort(sort, old_default, new_default, sortable) do
     if sort == old_default do
       new_default
     else
@@ -49,56 +125,33 @@ defmodule Cinder.Next.State do
     end
   end
 
-  @doc """
-  The filters, or argument values, to keep when the declarations change: those
-  whose field is still filterable, or whose argument is still declared.
-  """
-  def carry_over_inputs(values, names), do: Map.take(values, names)
-
-  @doc "The search to keep when the declarations change: all of it, while any field is searchable."
-  def carry_over_search(_search, []), do: ""
-  def carry_over_search(search, _searchable), do: search
+  # Either may be `nil`, when the action doesn't page
+  defp carry_over_page_size(size, old, new) do
+    if size != old[:size] and size in (new[:size_options] || []), do: size, else: new[:size]
+  end
 
   @doc """
-  The page to keep when the declarations change: the same one if the read gives the
-  same records (`same_source?`, and nothing in `query` but the page changed from
-  `old`), or else the first.
+  Where to go when a page past the first comes back empty (a bulk action deleted its
+  records, or changed them so the read no longer reaches them, or a URL asked for a
+  page past the last), rather than show an empty page with records before it: the
+  last page with records. Without a count to
+  say which that is (an uncounted read, or keyset pages, whose cursors can't say),
+  the first.
   """
-  def carry_over_page(query, old, same_source?) do
-    if same_source? and first_page(query) == first_page(old) do
-      query
-    else
-      first_page(query)
+  def leave_emptied_page(query, %Page{} = page, %Config{} = config) do
+    cond do
+      page.records != [] or first_page(query) == query -> :stay
+      config.pagination[:mode] == :keyset -> {:move, first_page(query)}
+      true -> {:move, %{query | page: last_page(page)}}
     end
   end
+
+  defp last_page(%Page{count: count, page_size: size}) when is_integer(count) do
+    max(div(count + size - 1, size), 1)
+  end
+
+  defp last_page(_uncounted), do: 1
 
   @doc "The query on its first page, as after anything that changes which records match."
   def first_page(query), do: %{query | page: 1, cursor: nil}
-
-  @doc """
-  The selected ids after a record's box is clicked: `id` selected, or cleared if it
-  was. Only an id in `selectable` (the page shown's records that can be selected)
-  can be, so any other, from a forged event, changes nothing.
-  """
-  def toggle_selected(selected, id, selectable) do
-    cond do
-      id not in selectable -> selected
-      id in selected -> MapSet.delete(selected, id)
-      true -> MapSet.put(selected, id)
-    end
-  end
-
-  @doc "The selected ids with every one of `selectable` (the page's) added."
-  def select_page(selected, selectable), do: MapSet.union(selected, selectable)
-
-  @doc "The selected ids with every one of `selectable` (the page's) removed."
-  def clear_page(selected, selectable), do: MapSet.difference(selected, selectable)
-
-  @doc """
-  Whether every one of `selectable` (the page's) is selected, so the page's box is
-  checked. A page with nothing selectable isn't.
-  """
-  def page_selected?(selected, selectable) do
-    MapSet.size(selectable) > 0 and MapSet.subset?(selectable, selected)
-  end
 end

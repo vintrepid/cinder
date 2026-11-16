@@ -56,7 +56,9 @@ defmodule Cinder.BulkActionExecutor do
 
   - `:resource` - The Ash resource, or a base `Ash.Query` whose filters, tenant and read
     action bound which records the action can touch (required)
-  - `:ids` - List of record IDs to act on (required)
+  - `:ids` - List of record IDs to act on (required, unless `:except` is given)
+  - `:except` - Act on every record the resource or base query reaches, except
+    those with these IDs
   - `:id_field` - The field to filter on (default: `:id`)
   - `:actor` - Actor for authorization
   - `:tenant` - Tenant for multi-tenancy
@@ -92,11 +94,15 @@ defmodule Cinder.BulkActionExecutor do
           {:ok, any()} | {:error, any()} | {:partial_success, Ash.BulkResult.t()}
   def execute(action, opts) do
     resource = Keyword.fetch!(opts, :resource)
-    ids = Keyword.fetch!(opts, :ids)
     id_field = Keyword.get(opts, :id_field, :id)
     action_opts = Keyword.get(opts, :action_opts, [])
 
-    query = build_query(resource, ids, id_field)
+    query =
+      case Keyword.fetch(opts, :except) do
+        {:ok, except} -> exclude(resource, except, id_field)
+        :error -> build_query(resource, Keyword.fetch!(opts, :ids), id_field)
+      end
+
     base_opts = build_auth_opts(opts)
 
     run_action(action, query, base_opts, action_opts)
@@ -113,6 +119,15 @@ defmodule Cinder.BulkActionExecutor do
     resource_or_query
     |> Ash.Query.new()
     |> Ash.Query.filter_input(filter)
+  end
+
+  # Every record the resource or base query reaches, except these
+  defp exclude(resource_or_query, [], _id_field), do: Ash.Query.new(resource_or_query)
+
+  defp exclude(resource_or_query, ids, id_field) do
+    resource_or_query
+    |> Ash.Query.new()
+    |> Ash.Query.filter_input(%{not: %{id_field => [in: ids]}})
   end
 
   @doc """
@@ -157,8 +172,15 @@ defmodule Cinder.BulkActionExecutor do
   # Atom actions: merge action_opts directly (for Ash.bulk_update/bulk_destroy)
   defp run_action(action, query, base_opts, action_opts) when is_atom(action) do
     # Ash only returns a bulk action's errors when asked, and a partial success would
-    # otherwise arrive with none; `action_opts` can turn it off (it can be expensive)
-    opts = base_opts |> Keyword.put(:return_errors?, true) |> Keyword.merge(action_opts)
+    # otherwise arrive with none (it can be expensive). By default Ash only runs one
+    # statement, which fails for changes that can't be atomic, so those run in batches
+    # instead. `action_opts` can override either.
+    opts =
+      base_opts
+      |> Keyword.put(:return_errors?, true)
+      |> Keyword.put(:strategy, [:atomic, :atomic_batches, :stream])
+      |> Keyword.merge(action_opts)
+
     resource = query.resource
 
     result =

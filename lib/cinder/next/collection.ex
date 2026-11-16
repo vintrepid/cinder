@@ -11,21 +11,28 @@ defmodule Cinder.Next.Collection do
   use Cinder.Messages
 
   alias Cinder.{Engine, Params, UrlSync}
-  alias Cinder.Next.{Config, State}
+  alias Cinder.Next.{BulkActionState, Config, RowSelection, State}
+  alias Phoenix.LiveView.JS
 
-  # Filter types render with a theme's classes, until theming is redone
+  # In milliseconds, before a bulk action's confirm is taken as an answer
+  @default_bulk_action_confirm_delay 500
+
+  ## Building and rebuilding
+
+  # Filter types render with a theme's classes, until theming is redone. The bulk
+  # actions' state is `Cinder.Next.BulkActionState`'s.
   @impl true
   def mount(socket) do
-    {:ok, assign(socket, theme: Cinder.Theme.merge("default"), running_bulk_action: nil)}
+    {:ok,
+     assign(socket, theme: Cinder.Theme.merge("default"), bulk_action: :idle, loading?: false)}
   end
 
+  # The fields' inner blocks are new on every parent render, so they're always
+  # taken; only the fields that are columns have cells. The config is only rebuilt
+  # when what's declared changes. Synced to the URL (`url_state`, the parent's
+  # `@url_state`, isn't `nil`), a change to the URL's params is applied too.
   @impl true
   def update(assigns, socket) do
-    # The fields' inner blocks are new on every parent render, so they're always
-    # taken; the config is only rebuilt when what's declared changes, and the records
-    # only read again when that changes what's read. Only the fields that are columns
-    # have cells. Synced to the URL (`url_params` isn't `nil`), a change to the URL's
-    # params is applied too.
     declarations =
       Config.declarations(
         assigns.options,
@@ -35,96 +42,82 @@ defmodule Cinder.Next.Collection do
       )
 
     columns = Enum.reject(assigns.fields, &(&1[:column] == false))
-    url_params = assigns.options[:url_state][:params]
-    old = socket.assigns
-    url_changed? = url_params != nil and url_params != old[:url_params]
-    socket = assign(socket, id: assigns.id, columns: columns, url_params: url_params)
+    url_state = assigns.options[:url_state]
+    url_params = url_state[:params]
+    url_changed? = url_params != nil and url_params != socket.assigns[:url_state][:params]
+    declarations_changed? = declarations != socket.assigns[:declarations]
+    socket = assign(socket, id: assigns.id, columns: columns, url_state: url_state)
 
     cond do
-      declarations != old[:declarations] ->
-        config =
-          Config.build(assigns.options, assigns.fields, assigns.arguments, assigns.bulk_actions)
+      declarations_changed? ->
+        {:ok, rebuild(socket, assigns, declarations, if(url_changed?, do: url_params))}
 
-        query = query(old, config, if(url_changed?, do: url_params))
-
-        socket =
-          socket
-          |> assign(declarations: declarations, config: config)
-          |> select(selected(old, config))
-
-        socket =
-          cond do
-            !read_again?(old, config, query) -> selectable_ids(socket)
-            # A rebuild that moves the query (back to the first page, say) moves the URL too
-            !url_changed? and query != old[:query] -> show_now(socket, query)
-            true -> show(socket, query)
-          end
-
-        {:ok, socket}
-
-      # A change to the app's own params changes nothing here
       url_changed? ->
-        query = from_url(url_params, old.config)
-        {:ok, if(query == old.query, do: socket, else: show(socket, query))}
+        {:ok, follow_url(socket, url_params)}
 
       true ->
         {:ok, socket}
     end
   end
 
-  # A rebuild, when the declarations change after mount: the user's sort, filters,
-  # arguments and search carry over, and the page too if the records would be the same
+  # On mount, or when the declarations change: the new config, then each piece of
+  # state carried over to it, then the records read again only if what's read
+  # changed. Anything kept from the old config must be checked against the new one
+  # here. `new_url_params` are the URL's, when they changed too.
+  defp rebuild(socket, assigns, declarations, new_url_params) do
+    old = socket.assigns
+
+    config =
+      Config.build(assigns.options, assigns.fields, assigns.arguments, assigns.bulk_actions)
+
+    query = query(old, config, new_url_params)
+
+    socket =
+      socket
+      |> assign(
+        declarations: declarations,
+        config: config,
+        bulk_action: BulkActionState.carry_over(old.bulk_action, config.bulk_actions)
+      )
+      |> change_selection(selection(old, config))
+
+    cond do
+      !read_again?(old, config, query) -> after_read(socket)
+      # A rebuild that moves the query (back to the first page, say) moves the URL too
+      new_url_params == nil and query != old[:query] -> move(socket, query)
+      true -> change_query(socket, query)
+    end
+  end
+
+  # Only the URL changed (back, forward, or a link). A change to the app's own
+  # params changes nothing here.
+  defp follow_url(socket, url_params) do
+    %{config: config, query: old} = socket.assigns
+    query = State.from_url(url_params, config)
+    if query == old, do: socket, else: change_query(socket, query)
+  end
+
+  # A rebuild after mount (see `State.carry_over/4`)
   defp query(%{config: old, query: query}, config, nil) do
-    sortable = for %Engine.Field{sortable?: true, name: name} <- config.fields, do: name
-    filterable = for %{column: column} <- config.filters, do: column.field
-    searchable = for %Engine.Field{searchable?: true, name: name} <- config.fields, do: name
-    arguments = for %Engine.Argument{param: param} <- config.arguments, do: param
-    sort = State.carry_over_sort(query.sort, old.sort.default, config.sort.default, sortable)
-
-    carried = %{
-      query
-      | sort: sort,
-        filters: State.carry_over_inputs(query.filters, filterable),
-        arguments: State.carry_over_inputs(query.arguments, arguments),
-        search: State.carry_over_search(query.search, searchable),
-        page_size: config.pagination[:size]
-    }
-
-    State.carry_over_page(carried, query, read(old) == read(config))
+    State.carry_over(query, old, config, Config.same_records?(old, config))
   end
 
   # On mount, or when the URL changes with the declarations: what the URL says
   defp query(_assigns, config, url_params) when url_params != nil do
-    from_url(url_params, config)
+    State.from_url(url_params, config)
   end
 
-  # The first build, on mount, before there's a config or query: a new collection
-  # starts on page 1 with the default sort
-  defp query(_assigns, config, nil), do: start(config)
+  # The first build, on mount, before there's a config or query
+  defp query(_assigns, config, nil), do: State.start(config)
 
-  # The selection survives a rebuild that reads the same records, while records can
-  # still be selected. A new collection has none.
-  defp selected(%{config: old, selected: selected}, config) do
-    if config.selectable != false and read(old) == read(config), do: selected, else: MapSet.new()
+  # A rebuild after mount (see `RowSelection.carry_over/4`). A new collection has
+  # nothing selected.
+  defp selection(%{config: old, selection: selection}, config) do
+    same_records? = Config.same_records?(old, config)
+    RowSelection.carry_over(selection, config.selectable, config.primary_key, same_records?)
   end
 
-  defp selected(_assigns, _config), do: MapSet.new()
-
-  defp start(config) do
-    %Engine.Query{sort: config.sort.default, page_size: config.pagination[:size]}
-  end
-
-  # Anything in the URL the collection can't use is left out: it's the user's to edit
-  defp from_url(params, config) do
-    opts = [
-      search?: config.search != nil,
-      pagination: config.pagination[:mode],
-      arguments: config.arguments,
-      sort_mode: config.sort.mode
-    ]
-
-    Params.from_url(params, config.fields, start(config), opts)
-  end
+  defp selection(_assigns, config), do: RowSelection.new(config.selectable, config.primary_key)
 
   # A function declared inline (a bulk action's, or `selectable`) closes over the
   # parent's assigns, so it's new whenever they change. The new one is kept, but
@@ -135,11 +128,7 @@ defmodule Cinder.Next.Collection do
 
   defp read_again?(_new_collection, _config, _query), do: true
 
-  # What decides the records read, besides the query
-  defp read(config) do
-    {Map.take(config, [:source, :action, :actor, :tenant, :scope, :query_opts]),
-     config.search[:fn], config.pagination[:mode]}
-  end
+  ## Events
 
   @impl true
   def handle_event("sort", %{"field" => field}, socket) do
@@ -152,7 +141,7 @@ defmodule Cinder.Next.Collection do
 
       column ->
         sort = State.toggle_sort(query.sort, field, column.sort.cycle, config.sort.mode)
-        {:noreply, change(socket, State.first_page(%{query | sort: sort}))}
+        {:noreply, request(socket, State.first_page(%{query | sort: sort}))}
     end
   end
 
@@ -171,7 +160,7 @@ defmodule Cinder.Next.Collection do
     }
 
     query = State.first_page(query)
-    {:noreply, change(socket, query)}
+    {:noreply, request(socket, query)}
   end
 
   # An offset page comes from the client, so one that isn't a positive number is
@@ -179,9 +168,17 @@ defmodule Cinder.Next.Collection do
   def handle_event("page", %{"page" => page}, socket) do
     with %{mode: :offset} <- socket.assigns.config.pagination,
          {page, ""} when page > 0 <- Integer.parse(page) do
-      {:noreply, change(socket, %{socket.assigns.query | page: page})}
+      {:noreply, request(socket, %{socket.assigns.query | page: page})}
     else
       _not_a_page -> {:noreply, socket}
+    end
+  end
+
+  # Which sizes can be chosen, and what one does to the page, are `State`'s
+  def handle_event("page_size", %{"page_size" => size}, socket) do
+    case State.change_page_size(socket.assigns.query, size, socket.assigns.config) do
+      {:ok, query} -> {:noreply, request(socket, query)}
+      :ignore -> {:noreply, socket}
     end
   end
 
@@ -191,87 +188,100 @@ defmodule Cinder.Next.Collection do
 
     with %{mode: :keyset} <- config.pagination,
          {_direction, _cursor} = cursor <- cursor(page, direction) do
-      {:noreply, change(socket, %{query | cursor: cursor})}
+      {:noreply, request(socket, %{query | cursor: cursor})}
     else
       _no_page_that_way -> {:noreply, socket}
     end
   end
 
-  # Only the page shown's records that can be selected can be (`selectable_ids`), so a
-  # forged id changes nothing
+  # A forged id, or all matching when it isn't offered, changes nothing (see
+  # `RowSelection`)
   def handle_event("select", %{"id" => id}, socket) do
-    %{selected: selected, selectable_ids: selectable} = socket.assigns
-    {:noreply, select(socket, State.toggle_selected(selected, id, selectable))}
+    {:noreply, change_selection(socket, RowSelection.toggle(socket.assigns.selection, id))}
   end
 
-  # The page's box is checked when all of the page is selected, so clicking it clears
-  # the page, and otherwise selects it
   def handle_event("select_page", _params, socket) do
-    %{selected: selected, selectable_ids: selectable} = socket.assigns
+    {:noreply, change_selection(socket, RowSelection.toggle_page(socket.assigns.selection))}
+  end
 
-    selected =
-      if State.page_selected?(selected, selectable) do
-        State.clear_page(selected, selectable)
-      else
-        State.select_page(selected, selectable)
-      end
-
-    {:noreply, select(socket, selected)}
+  def handle_event("select_all_matching", _params, socket) do
+    selection = RowSelection.select_all_matching(socket.assigns.selection)
+    {:noreply, change_selection(socket, selection)}
   end
 
   def handle_event("clear_selection", _params, socket) do
-    {:noreply, select(socket, MapSet.new())}
+    {:noreply, change_selection(socket, RowSelection.clear(socket.assigns.selection))}
   end
 
-  # An action that isn't declared, with nothing selected, or while one is running
-  # (from tampering: the buttons are disabled) is ignored. A declared confirm is
-  # never skipped, so until confirming is built, an action with one doesn't run.
+  # When each is ignored, asks first, or runs is `BulkActionState`'s
   def handle_event("bulk_action", %{"name" => name}, socket) do
-    %{config: config, selected: selected, running_bulk_action: running} = socket.assigns
+    %{bulk_action: state, config: config, selection: selection} = socket.assigns
     bulk_action = Enum.find(config.bulk_actions, &(&1.name == name))
 
-    if bulk_action && bulk_action.confirm == nil && running == nil && MapSet.size(selected) > 0 do
-      {:noreply, run_bulk_action(socket, bulk_action)}
-    else
-      {:noreply, socket}
+    case BulkActionState.ask(state, bulk_action, RowSelection.count(selection), now()) do
+      {:confirming, state} -> {:noreply, assign(socket, :bulk_action, state)}
+      {:run, bulk_action} -> {:noreply, run_bulk_action(socket, bulk_action)}
+      :ignore -> {:noreply, socket}
     end
   end
 
-  # On the records selected, as they're read (see `Engine.run_bulk_action/4`)
-  defp run_bulk_action(socket, bulk_action) do
-    %{config: config, query: query, selected: selected} = socket.assigns
-    ids = MapSet.to_list(selected)
-    running = %{name: bulk_action.name, selected_count: MapSet.size(selected)}
+  def handle_event("confirm_bulk_action", %{"name" => name}, socket) do
+    %{bulk_action: state, selection: selection} = socket.assigns
+    count = RowSelection.count(selection)
 
-    opts =
-      [
-        action: config.action,
-        arguments: config.arguments,
-        argument_values: query.arguments,
-        query_opts: config.query_opts,
-        action_opts: bulk_action.action_opts
-      ] ++ Enum.to_list(Map.take(config, [:actor, :tenant, :scope]))
+    case BulkActionState.answer(state, name, count, now(), confirm_delay()) do
+      {:run, bulk_action} -> {:noreply, run_bulk_action(socket, bulk_action)}
+      :ignore -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("cancel_bulk_action", _params, socket) do
+    {:noreply, assign(socket, :bulk_action, BulkActionState.cancel(socket.assigns.bulk_action))}
+  end
+
+  defp cursor(%{more?: true, last_cursor: cursor}, "next_page"), do: {:after, cursor}
+  defp cursor(%{previous?: true, first_cursor: cursor}, "previous_page"), do: {:before, cursor}
+  defp cursor(_page, _direction), do: nil
+
+  # What's done in the background: a read, or a bulk action
+  @impl true
+  def handle_async(:read, {:ok, result}, socket), do: {:noreply, read_done(socket, result)}
+  def handle_async(:read, {:exit, reason}, _socket), do: exit(reason)
+  def handle_async(:bulk_action, result, socket), do: {:noreply, bulk_action_done(socket, result)}
+
+  ## Bulk actions
+
+  defp confirm_delay do
+    Application.get_env(:cinder, :bulk_action_confirm_delay, @default_bulk_action_confirm_delay)
+  end
+
+  # On the records selected, as they're read (see `Engine.run_bulk_action/6`)
+  defp run_bulk_action(socket, bulk_action) do
+    %{config: config, query: query, selection: selection} = socket.assigns
+    {source, fields, query, opts} = read_inputs(config, query)
+    opts = [action_opts: bulk_action.action_opts] ++ opts
+    running = BulkActionState.running(bulk_action, RowSelection.count(selection))
+    selection = RowSelection.to_engine(selection)
 
     socket
-    |> assign(:running_bulk_action, running)
+    |> assign(:bulk_action, running)
     |> start_async(:bulk_action, fn ->
-      Engine.run_bulk_action(config.source, bulk_action.action, ids, opts)
+      Engine.run_bulk_action(source, fields, query, bulk_action.action, selection, opts)
     end)
   end
 
   # After a success or a partial success, the selected records have changed, so
   # they're no longer what was selected. After an error nothing changed, so the
   # user can try again.
-  @impl true
-  def handle_async(:bulk_action, result, socket) do
+  defp bulk_action_done(socket, result) do
     {status, value, errors} = bulk_result(result)
-    %{config: config, running_bulk_action: running, query: query} = socket.assigns
+    %{config: config, bulk_action: {:running, bulk_action, count}, query: query} = socket.assigns
 
     if config.on_bulk_action_result do
       payload = %{
-        bulk_action: running.name,
+        bulk_action: bulk_action.name,
         status: status,
-        selected_count: running.selected_count,
+        selected_count: count,
         result: value,
         errors: errors,
         component_id: socket.assigns.id
@@ -280,124 +290,111 @@ defmodule Cinder.Next.Collection do
       send(self(), {config.on_bulk_action_result, payload})
     end
 
-    socket = assign(socket, :running_bulk_action, nil)
+    socket = assign(socket, :bulk_action, :idle)
 
     if status == :error do
-      {:noreply, socket}
+      socket
     else
-      {:noreply, socket |> select(MapSet.new()) |> show(query) |> leave_emptied_page()}
+      selection = RowSelection.clear(socket.assigns.selection)
+      socket |> change_selection(selection) |> change_query(query)
     end
   end
 
-  # An action that empties the page shown (deleting its records, or changing them so
-  # the read no longer reaches them) moves to the last page with records. Without a
-  # count to say which that is (an uncounted read, or keyset pages, whose cursors
-  # can't say), it's the first.
+  # Where to is `State`'s
   defp leave_emptied_page(socket) do
     %{config: config, page: page, query: query} = socket.assigns
 
-    if page.records == [] and (query.page > 1 or query.cursor != nil) do
-      moved =
-        if config.pagination[:mode] == :keyset do
-          State.first_page(query)
-        else
-          %{query | page: last_page(page)}
-        end
-
-      show_now(socket, moved)
-    else
-      socket
+    case State.leave_emptied_page(query, page, config) do
+      {:move, query} -> move(socket, query)
+      :stay -> socket
     end
   end
 
-  defp last_page(%Engine.Page{count: count, page_size: size}) when is_integer(count) do
-    max(div(count + size - 1, size), 1)
-  end
-
-  defp last_page(_uncounted), do: 1
+  defp now, do: System.monotonic_time(:millisecond)
 
   defp bulk_result({:ok, {:ok, value}}), do: {:success, value, []}
   defp bulk_result({:ok, {:partial_success, bulk}}), do: {:partial_success, bulk, bulk.errors}
   defp bulk_result({:ok, {:error, reason}}), do: {:error, nil, List.wrap(reason)}
   defp bulk_result({:exit, reason}), do: {:error, nil, [reason]}
 
-  defp cursor(%{more?: true, last_cursor: cursor}, "next_page"), do: {:after, cursor}
-  defp cursor(%{previous?: true, first_cursor: cursor}, "previous_page"), do: {:before, cursor}
-  defp cursor(_page, _direction), do: nil
+  ## How what the user does reaches the page
 
-  # The parent hears of each change, if it asked to. A new collection has selected
-  # nothing, so mounting one isn't a change.
-  defp select(socket, selected) do
+  # Every change to the selection, and the reactions to it. The parent hears of each
+  # change, if it asked to. A new collection has selected nothing, so mounting one
+  # isn't a change.
+  defp change_selection(socket, selection) do
     %{config: config, id: id} = socket.assigns
+    old = socket.assigns[:selection] || selection
 
-    if config.on_selection_change && selected != (socket.assigns[:selected] || MapSet.new()) do
-      count = MapSet.size(selected)
-      payload = %{selected_ids: selected, selected_count: count, component_id: id}
+    if config.on_selection_change && RowSelection.changed?(old, selection) do
+      payload = Map.put(RowSelection.payload(selection), :component_id, id)
       send(self(), {config.on_selection_change, payload})
     end
 
-    assign(socket, :selected, selected)
+    bulk_action =
+      BulkActionState.for_selection(socket.assigns.bulk_action, RowSelection.count(selection))
+
+    assign(socket, selection: selection, bulk_action: bulk_action)
   end
 
-  # Synced, what the user does changes the URL, and shows when the URL comes back,
-  # so the new records and the new URL arrive in one render
-  defp change(%{assigns: %{url_params: nil}} = socket, query), do: show(socket, query)
+  # A query the user asks for, from an event. Synced, it changes the URL, and the
+  # query changes when the URL comes back, which it has before the next event (see
+  # `UrlSync.patch/4`), so a quick second change starts from this one.
+  defp request(%{assigns: %{url_state: nil}} = socket, query), do: change_query(socket, query)
 
-  defp change(socket, query) do
-    patch_url(socket, query)
-    socket
+  defp request(%{assigns: %{config: config, url_state: url_state}} = socket, query) do
+    UrlSync.patch(socket, url_state.uri, State.to_url(query, config),
+      owns: State.url_keys(config)
+    )
   end
 
-  # A move the collection makes itself (a rebuild, or leaving an emptied page) shows
-  # in this render. Synced, the URL follows: `patch_url/2` only asks the parent to
-  # patch, changing nothing here. Unlike `change/2`, which waits for the URL, this
-  # doesn't show the old records while it comes back, and the query that comes back
-  # is the one shown, so it isn't read again.
-  defp show_now(socket, query) do
-    if socket.assigns.url_params, do: patch_url(socket, query)
-    show(socket, query)
+  # A move the collection makes itself (a rebuild, or leaving an emptied page), shown
+  # at once. Synced, the URL follows, and the query that comes back is the one shown,
+  # so it isn't read again. A move can be made while the collection is updated, so
+  # the URL is patched after this event (`UrlSync.patch_later/2`). A click already
+  # waiting comes first, and the move's URL then undoes it: rare, as moves don't come
+  # from clicking.
+  defp move(%{assigns: %{config: config}} = socket, query) do
+    if socket.assigns.url_state do
+      UrlSync.patch_later(State.to_url(query, config), owns: State.url_keys(config))
+    end
+
+    change_query(socket, query)
   end
 
-  defp patch_url(%{assigns: %{config: config}}, query) do
-    opts = [arguments: config.arguments]
-    params = Params.to_url(query, config.fields, start(config), opts)
-    UrlSync.patch(params, owns: Params.url_keys(config.fields, opts))
-  end
+  # Every new query (or the same one read again), and the reactions to it, then the
+  # read
+  defp change_query(socket, query) do
+    old = socket.assigns[:query]
 
-  defp show(socket, query) do
-    socket |> new_arguments(query) |> assign(:query, query) |> load() |> selectable_ids()
-  end
-
-  # Arguments decide what the read action reads, as the action does, so new values
-  # clear the selection as a new action would: a bulk action then only reaches
-  # records selected under the arguments it runs with
-  defp new_arguments(%{assigns: %{query: %{arguments: old}}} = socket, %{arguments: new})
-       when old != new do
-    select(socket, MapSet.new())
-  end
-
-  defp new_arguments(socket, _query), do: socket
-
-  # The ids of the page's records that can be selected: the only ones the boxes can
-  # change. Ids are kept as the strings the boxes carry.
-  defp selectable_ids(%{assigns: %{config: config, page: page}} = socket) do
-    ids =
-      for record <- page.records, selectable?(config.selectable, record), into: MapSet.new() do
-        row_id(config, record)
+    # A new query can make the selection stale (see `RowSelection.for_query/3`); a
+    # new collection has no query before it
+    socket =
+      if old do
+        change_selection(socket, RowSelection.for_query(socket.assigns.selection, old, query))
+      else
+        socket
       end
 
-    assign(socket, :selectable_ids, ids)
+    socket |> assign(:query, query) |> read()
   end
 
-  defp selectable?(selectable, record) when is_function(selectable, 1), do: selectable.(record)
-  defp selectable?(selectable, _record), do: selectable
+  # Every page read (or the same page, when a rebuild changes what can be done with
+  # it), and the reactions to it: the selection takes which of its records can be
+  # selected, and how many match
+  defp after_read(%{assigns: %{page: page, selection: selection}} = socket) do
+    assign(socket, :selection, RowSelection.for_page(selection, page))
+  end
 
-  defp row_id(config, record), do: to_string(Map.fetch!(record, config.primary_key))
+  ## Reading
 
-  # Synchronous, and a failed read crashes, until the slices for loading states and
-  # errors. The controls' values are worked out here, with the records, rather than
-  # in `render/1`, where they'd be new on every render.
-  defp load(socket) do
+  # In the background, so the records shown stay until the new ones arrive, and a
+  # later read supersedes one still running. Before the page renders when Ash's
+  # `disable_async?` is set (as apps do in their tests), or for the first page with
+  # `initial_load: :sync`. A failed read crashes, until the errors slice. The
+  # controls' values are worked out here, rather than in `render/1`, where they'd be
+  # new on every render.
+  defp read(socket) do
     %{config: config, query: query} = socket.assigns
 
     socket =
@@ -406,12 +403,24 @@ defmodule Cinder.Next.Collection do
         argument_values: Params.filter_values(query.arguments, config.arguments)
       )
 
-    # A read missing a required argument would fail, and a form doesn't say a field
-    # is required before it's used
-    if Enum.any?(config.arguments, &(&1.required? and !Map.has_key?(query.arguments, &1.param))) do
-      assign(socket, page: %Engine.Page{}, argument_errors: %{})
-    else
-      run(socket)
+    {source, fields, query, opts} = read_inputs(config, query)
+    run = fn -> Engine.run(source, fields, query, opts) end
+
+    cond do
+      # A read missing a required argument would fail, and a form doesn't say a field
+      # is required before it's used
+      Enum.any?(config.arguments, &(&1.required? and !Map.has_key?(query.arguments, &1.param))) ->
+        read_done(socket, {:ok, %Engine.Page{}})
+
+      Application.get_env(:ash, :disable_async?) == true or
+          (config.initial_load == :sync and socket.assigns[:page] == nil) ->
+        read_done(socket, run.())
+
+      true ->
+        socket
+        |> assign(:loading?, true)
+        |> assign_new(:page, fn -> %Engine.Page{} end)
+        |> start_async(:read, run)
     end
   end
 
@@ -430,13 +439,17 @@ defmodule Cinder.Next.Collection do
     {config.source, config.fields, query, opts}
   end
 
-  defp run(socket) do
-    %{config: config, query: query} = socket.assigns
-    {source, fields, query, opts} = read_inputs(config, query)
+  # A read's result, and the reactions to it: the selection takes which of its
+  # records can be selected and how many match, and a page past the first that
+  # came back empty (its records deleted by a bulk action, or a URL asking for a
+  # page past the last) moves to one with records
+  defp read_done(socket, result) do
+    socket = assign(socket, :loading?, false)
+    query = socket.assigns.query
 
-    case {Engine.run(source, fields, query, opts), query.cursor} do
+    case {result, query.cursor} do
       {{:ok, page}, _cursor} ->
-        assign(socket, page: page, argument_errors: %{})
+        socket |> assign(page: page, argument_errors: %{}) |> after_read() |> leave_emptied_page()
 
       # What the user can fix: a value the action can't use. Ash's messages, until
       # they're translated.
@@ -444,12 +457,12 @@ defmodule Cinder.Next.Collection do
         errors =
           Map.new(inputs, fn {name, errors} -> {name, Enum.map(errors, &interpolate/1)} end)
 
-        assign(socket, page: %Engine.Page{}, argument_errors: errors)
+        socket |> assign(page: %Engine.Page{}, argument_errors: errors) |> after_read()
 
       # Only a cursor from the URL can fail to read (the others are a page's own), and
-      # what the user puts in the URL is dropped
+      # what the user puts in the URL is dropped, from the URL too
       {{:error, _error}, {_direction, _cursor}} ->
-        show(socket, State.first_page(query))
+        move(socket, State.first_page(query))
     end
   end
 
@@ -465,6 +478,8 @@ defmodule Cinder.Next.Collection do
   defp var(value) do
     if String.Chars.impl_for(value), do: to_string(value), else: inspect(value)
   end
+
+  ## Markup
 
   @impl true
   def render(assigns) do
@@ -509,19 +524,22 @@ defmodule Cinder.Next.Collection do
         :if={@config.bulk_actions != []}
         id={"#{@id}-bulk"}
         bulk_actions={@config.bulk_actions}
-        count={MapSet.size(@selected)}
-        running?={@running_bulk_action != nil}
+        count={RowSelection.count(@selection)}
+        everything?={RowSelection.everything?(@selection)}
+        matching={RowSelection.all_matching_offer(@selection)}
+        bulk_action={@bulk_action}
+        confirm_component={@config.bulk_action_confirm || (&bulk_action_confirm/1)}
         target={@myself}
       />
-      <table>
+      <table aria-busy={@loading? && "true"}>
         <thead>
           <tr>
             <th :if={@config.selectable != false}>
               <input
                 type="checkbox"
                 aria-label={dgettext("cinder", "Select all on this page")}
-                checked={State.page_selected?(@selected, @selectable_ids)}
-                disabled={@selectable_ids == MapSet.new()}
+                checked={RowSelection.page_selected?(@selection)}
+                disabled={MapSet.size(@selection.page_ids) == 0}
                 phx-click="select_page"
                 phx-target={@myself}
               />
@@ -549,10 +567,9 @@ defmodule Cinder.Next.Collection do
           <tr :for={record <- @page.records}>
             <td :if={@config.selectable != false}>
               <.row_box
-                id={row_id(@config, record)}
+                id={RowSelection.id(@selection, record)}
                 collection_id={@id}
-                selected={@selected}
-                selectable_ids={@selectable_ids}
+                selection={@selection}
                 target={@myself}
               />
             </td>
@@ -560,19 +577,35 @@ defmodule Cinder.Next.Collection do
           </tr>
         </tbody>
       </table>
-      <nav :if={@config.pagination && (@page.previous? or @page.more?)} aria-label="Pagination">
-        <button
-          type="button"
-          phx-target={@myself}
-          disabled={!@page.previous?}
-          {page_click(@page, :previous)}
-        >
-          {dgettext("cinder", "Previous page")}
-        </button>
-        <span :if={@page.page}>{page_of(@page)}</span>
-        <button type="button" phx-target={@myself} disabled={!@page.more?} {page_click(@page, :next)}>
-          {dgettext("cinder", "Next page")}
-        </button>
+      <%!-- Always there, so it's a live region before its text changes. Until theming
+      puts it over the table, what's below moves as it fills and empties. --%>
+      <p id={"#{@id}-loading"} role="status">{if @loading?, do: dgettext("cinder", "Loading...")}</p>
+      <%!-- The page size can be chosen even on one page, so a user who chose more can go back to fewer --%>
+      <nav
+        :if={@config.pagination && (@page.previous? or @page.more? or size_choice?(@config))}
+        aria-label="Pagination"
+      >
+        <div :if={@page.previous? or @page.more?}>
+          <button
+            type="button"
+            phx-target={@myself}
+            disabled={!@page.previous?}
+            {page_click(@page, :previous)}
+          >
+            {dgettext("cinder", "Previous page")}
+          </button>
+          <span :if={@page.page}>{page_of(@page)}</span>
+          <button type="button" phx-target={@myself} disabled={!@page.more?} {page_click(@page, :next)}>
+            {dgettext("cinder", "Next page")}
+          </button>
+        </div>
+        <.page_size
+          :if={size_choice?(@config)}
+          id={"#{@id}-page-size"}
+          sizes={@config.pagination.size_options}
+          size={@query.page_size}
+          target={@myself}
+        />
       </nav>
     </div>
     """
@@ -586,22 +619,86 @@ defmodule Cinder.Next.Collection do
     ~H"""
     <section id={@id} aria-label={dgettext("cinder", "Bulk actions")}>
       <div :if={@count > 0} id={"#{@id}-count"} aria-live="polite">
-        <p>{dgettext("cinder", "%{count} selected", count: @count)}</p>
+        <p :if={!@everything?}>{dgettext("cinder", "%{count} selected", count: @count)}</p>
+        <p :if={@everything?}>
+          {dngettext("cinder", "All %{count} selected", "All %{count} selected", @count)}
+        </p>
+        <button
+          :if={@matching}
+          type="button"
+          phx-click="select_all_matching"
+          phx-target={@target}
+        >
+          {dngettext(
+            "cinder",
+            "Select all %{count} matching",
+            "Select all %{count} matching",
+            @matching
+          )}
+        </button>
         <button type="button" phx-click="clear_selection" phx-target={@target}>
           {dgettext("cinder", "Clear selection")}
         </button>
       </div>
+      {confirm_prompt(assigns)}
       <button
         :for={bulk_action <- @bulk_actions}
         type="button"
         phx-click="bulk_action"
         phx-value-name={bulk_action.name}
         phx-target={@target}
-        disabled={@count == 0 or @running?}
+        disabled={@count == 0 or @bulk_action != :idle}
       >
         {bulk_action.label}
       </button>
     </section>
+    """
+  end
+
+  # The confirm component (the developer's, or Cinder's own) is given these assigns.
+  # `component/3` is what `<.name>` compiles to, for a component held in a variable.
+  defp confirm_prompt(%{bulk_action: {:confirming, bulk_action, _asked_at}} = assigns) do
+    %{count: count, target: target} = assigns
+
+    Phoenix.LiveView.TagEngine.component(
+      assigns.confirm_component,
+      [
+        id: "#{assigns.id}-confirm",
+        name: bulk_action.name,
+        label: bulk_action.label,
+        message: String.replace(bulk_action.confirm, "{count}", to_string(count)),
+        count: count,
+        confirm: JS.push("confirm_bulk_action", value: %{name: bulk_action.name}, target: target),
+        cancel: JS.push("cancel_bulk_action", target: target)
+      ],
+      {__MODULE__, __ENV__.function, __ENV__.file, __ENV__.line}
+    )
+  end
+
+  defp confirm_prompt(_not_confirming), do: nil
+
+  # Rendered `open`, so it shows in place even in an app without Cinder's hooks; the
+  # hook reopens it as a modal (on top, the page inert), and Esc runs `cancel`. Cancel
+  # comes first and has focus, so Enter or Space cancels.
+  defp bulk_action_confirm(assigns) do
+    ~H"""
+    <dialog id={@id} open phx-hook=".BulkActionConfirm" data-cancel={@cancel}>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".BulkActionConfirm">
+        export default {
+          mounted() {
+            this.el.addEventListener("cancel", (event) => {
+              event.preventDefault()
+              this.js().exec(this.el.dataset.cancel)
+            })
+            this.el.close()
+            this.el.showModal()
+          }
+        }
+      </script>
+      <p>{@message}</p>
+      <button type="button" phx-click={@cancel} autofocus>{dgettext("cinder", "Cancel")}</button>
+      <button type="button" phx-click={@confirm}>{@label}</button>
+    </dialog>
     """
   end
 
@@ -611,12 +708,35 @@ defmodule Cinder.Next.Collection do
       type="checkbox"
       id={"#{@collection_id}-select-#{@id}"}
       aria-label={dgettext("cinder", "Select row")}
-      checked={@id in @selected}
-      disabled={@id not in @selectable_ids}
+      checked={RowSelection.selected?(@selection, @id)}
+      disabled={@id not in @selection.page_ids}
       phx-click="select"
       phx-value-id={@id}
       phx-target={@target}
     />
+    """
+  end
+
+  defp size_choice?(%{pagination: %{size_options: [_, _ | _]}}), do: true
+  defp size_choice?(_config), do: false
+
+  # Split, so a translation can put the size where its language needs it
+  defp page_size(assigns) do
+    [before, after_sizes] =
+      String.split(dgettext("cinder", "Show {selector} per page"), "{selector}")
+
+    assigns = assign(assigns, before: before, after_sizes: after_sizes)
+
+    ~H"""
+    <form id={@id} phx-change="page_size" phx-target={@target}>
+      <label>
+        {@before}
+        <select name="page_size">
+          <option :for={size <- @sizes} value={size} selected={size == @size}>{size}</option>
+        </select>
+        {@after_sizes}
+      </label>
+    </form>
     """
   end
 

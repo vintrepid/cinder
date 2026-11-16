@@ -160,6 +160,9 @@ defmodule Cinder.MixProject do
         "Mix Tasks": [
           ~r/Mix\.Tasks\./
         ],
+        "1.0 Preview": [
+          Cinder.Next
+        ],
         Deprecated: [
           Cinder.Table,
           Cinder.Table.UrlSync,

@@ -1,15 +1,20 @@
 defmodule Cinder.Next.CollectionTest do
   # The Music records are shared ETS data
   use Cinder.ConnCase, async: false
+  use Mimic
 
   require Ash.Query
+
+  import Phoenix.ConnTest, only: [get: 2, html_response: 2]
 
   import Phoenix.LiveViewTest,
     only: [
       element: 2,
       element: 3,
+      assert_patch: 3,
+      live: 2,
       render: 1,
-      render_change: 2,
+      render_async: 1,
       render_click: 1,
       render_click: 2,
       render_click: 3,
@@ -168,19 +173,6 @@ defmodule Cinder.Next.CollectionTest do
       |> choose("Jazz")
       |> assert_has("#albums tbody tr", count: 1)
       |> assert_has("#albums td", text: "Blue")
-    end
-
-    test "a filter on a field that isn't filterable (a tampered event) is ignored",
-         %{conn: conn} do
-      conn
-      |> visit(filterable())
-      |> unwrap(fn view ->
-        view
-        |> element("#albums-filters")
-        |> render_change(%{"filters" => %{"title" => "ab", "artist.name" => "nobody"}})
-      end)
-      |> assert_has("#albums tbody tr", count: 1)
-      |> assert_has("#albums td", text: "Abbey")
     end
   end
 
@@ -352,6 +344,32 @@ defmodule Cinder.Next.CollectionTest do
       |> refute_has("#albums nav")
     end
 
+    # Which sizes, and what a new one does to the page, are `State`'s
+    defp page_size(session, size), do: select(session, "Show", option: size, exact: false)
+
+    test "the page size can be chosen when there are size options, even on one page",
+         %{conn: conn} do
+      conn
+      |> visit(paged())
+      |> refute_has("#albums select")
+
+      conn
+      |> visit(paged(Ash.Query.sort(Music.Album, :title), size: 5, size_options: [2, 5]))
+      |> titles(["Abbey", "Blue", "Cold", "Dark", "Echo"])
+      |> refute_has("#albums nav button")
+      |> page_size("2")
+      |> titles(["Abbey", "Blue"])
+    end
+
+    test "choosing a page size shows the first page of that many", %{conn: conn} do
+      conn
+      |> visit(paged(Ash.Query.sort(Music.Album, :title), size: 2, size_options: [2, 3]))
+      |> click_button("#albums nav button", "Next page")
+      |> page_size("3")
+      |> assert_has("#albums nav", text: "Page 1 of 2")
+      |> titles(["Abbey", "Blue", "Cold"])
+    end
+
     test "an action that doesn't paginate shows every record", %{conn: conn} do
       conn
       |> visit(paged(Ash.Query.for_read(Music.Album, :by_context), []))
@@ -398,6 +416,7 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_has("#albums nav button[disabled]", text: "Previous page")
     end
 
+    # The offset test can't tell `State.first_page/1` from setting the page number alone
     test "by keyset, back to the first page when the sort or the filters change",
          %{conn: conn} do
       conn
@@ -413,16 +432,6 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_has("#albums nav button[disabled]", text: "Previous page")
     end
 
-    test "an action that only pages by keyset does so without being told", %{conn: conn} do
-      query = Music.Album |> Ash.Query.for_read(:keyset_only) |> Ash.Query.sort(:title)
-
-      conn
-      |> visit(paged(query))
-      |> titles(["Abbey", "Blue"])
-      |> click_button("#albums nav button", "Next page")
-      |> titles(["Cold", "Dark"])
-    end
-
     test "each mode ignores the other's events (tampered ones)", %{conn: conn} do
       conn
       |> visit(paged(Ash.Query.sort(Music.Album, :title), mode: :keyset, size: 2))
@@ -433,6 +442,84 @@ defmodule Cinder.Next.CollectionTest do
       |> visit(paged())
       |> unwrap(&(&1 |> with_target("#albums") |> render_click("next_page", %{})))
       |> assert_has("#albums nav", text: "Page 1 of 3")
+    end
+  end
+
+  describe "loading" do
+    # Every other test here reads as it renders (see `Cinder.ConnCase`)
+    setup {Cinder.TestHelpers, :enable_async_loading}
+
+    defp loading(initial_load \\ nil) do
+      Fixture.register(fn assigns ->
+        assigns = assign(assigns, initial_load: initial_load)
+
+        ~H"""
+        <Cinder.Next.collection
+          id="albums"
+          query={Ash.Query.sort(Music.Album, :title)}
+          initial_load={@initial_load}
+        >
+          <:field :let={album} name="title" sort>{album.title}</:field>
+        </Cinder.Next.collection>
+        """
+      end)
+    end
+
+    defp page_html(conn, path), do: conn |> get(path) |> html_response(200)
+
+    test "the page's HTML says it's loading, with no rows, and they arrive once it's connected",
+         %{conn: conn} do
+      path = loading()
+      html = page_html(conn, path)
+      assert html =~ ~s(aria-busy="true")
+      assert html =~ "Loading..."
+      refute html =~ "Abbey"
+
+      conn
+      |> visit(path)
+      |> assert_has("#albums td", text: "Abbey", timeout: 1000)
+      |> refute_has("#albums table[aria-busy]")
+      |> refute_has("#albums", text: "Loading...")
+    end
+
+    test "read first, by the collection or the app's default, the page's HTML has the rows",
+         %{conn: conn} do
+      assert page_html(conn, loading(:sync)) =~ "Abbey"
+
+      Cinder.TestHelpers.put_app_env(:default_initial_load, :sync)
+      assert page_html(conn, loading()) =~ "Abbey"
+    end
+
+    # The read is paused, so what's shown while it's in flight can't race its result
+    test "while a read is in flight, the rows shown stay, marked busy", %{conn: conn} do
+      {:ok, view, _html} = live(conn, loading())
+      render_async(view)
+
+      test_pid = self()
+      allow(Ash, test_pid, view.pid)
+
+      expect(Ash, :read, fn query, opts ->
+        send(test_pid, {:reading, self()})
+
+        receive do
+          :continue -> call_original(Ash, :read, [query, opts])
+        after
+          5_000 -> raise "the test didn't let the read finish"
+        end
+      end)
+
+      view |> element("#albums th button", "Title") |> render_click()
+      assert_receive {:reading, read}
+
+      html = render(view)
+      assert html =~ ~s(aria-busy="true")
+      assert html =~ "Loading..."
+      assert html =~ ~r/Abbey.*Blue/s
+
+      send(read, :continue)
+      html = render_async(view)
+      refute html =~ "aria-busy"
+      assert html =~ ~r/Blue.*Abbey/s
     end
   end
 
@@ -489,28 +576,6 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_has("#albums th[aria-sort=descending]", text: "Title")
     end
 
-    test "exclusive, a URL's sorts after the first are ignored", %{conn: conn} do
-      path =
-        Fixture.register(fn assigns ->
-          ~H"""
-          <Cinder.Next.collection
-            id="albums"
-            resource={Music.Album}
-            sort={[mode: :exclusive]}
-            url_state={@url_state}
-          >
-            <:field :let={album} name="genre" sort>{album.genre}</:field>
-            <:field :let={album} name="title" sort>{album.title}</:field>
-          </Cinder.Next.collection>
-          """
-        end)
-
-      conn
-      |> visit(path <> "?sort=-genre,title")
-      |> assert_has("#albums th[aria-sort=descending]", text: "Genre")
-      |> assert_has("#albums th[aria-sort=none]", text: "Title")
-    end
-
     test "going back to the default takes it out of the URL", %{conn: conn} do
       path = synced()
 
@@ -526,6 +591,18 @@ defmodule Cinder.Next.CollectionTest do
       |> fill_in("Title", with: "")
       |> assert_path(path, query_params: %{search: "e"}, timeout: 500)
       |> fill_in("Search", with: "")
+      |> assert_path(path, query_params: %{}, timeout: 500)
+    end
+
+    test "a page size goes in the URL, and back at the default leaves it", %{conn: conn} do
+      path = synced(size: 2, size_options: [2, 3])
+
+      conn
+      |> visit(path)
+      |> page_size("3")
+      |> assert_path(path, query_params: %{page_size: "3"}, timeout: 500)
+      |> titles(["Abbey", "Blue", "Cold"], timeout: 500)
+      |> page_size("2")
       |> assert_path(path, query_params: %{}, timeout: 500)
     end
 
@@ -563,11 +640,24 @@ defmodule Cinder.Next.CollectionTest do
       |> titles(["Echo", "Dark"], timeout: 500)
     end
 
-    test "params the collection can't use are ignored", %{conn: conn} do
+    # So a quick second change starts from this one, not from before it
+    test "a change, its URL and its records are done within its event", %{conn: conn} do
+      path = synced()
+      {:ok, view, _html} = live(conn, path)
+
+      html = view |> element("#albums th button", "Title") |> render_click()
+      assert html =~ ~r/Echo.*Dark/s
+      assert_patch(view, path <> "?sort=-title", 0)
+    end
+
+    test "a page past the last shows the last, and the URL follows", %{conn: conn} do
+      path = synced()
+
       conn
-      |> visit(synced() <> "?sort=-nope&page=two&genre=polka")
-      |> assert_has("#albums nav", text: "Page 1 of 3")
-      |> titles(["Abbey", "Blue"], timeout: 500)
+      |> visit(path <> "?page=9")
+      |> assert_has("#albums nav", text: "Page 3 of 3")
+      |> titles(["Echo"])
+      |> assert_path(path, query_params: %{page: "3"}, timeout: 500)
     end
 
     # The cursor's value is Ash's, so the URL is only checked for having it
@@ -588,10 +678,13 @@ defmodule Cinder.Next.CollectionTest do
 
     # The engine logs the failed read
     @tag :capture_log
-    test "a cursor that isn't one shows the first page", %{conn: conn} do
+    test "a cursor that isn't one shows the first page, and leaves the URL", %{conn: conn} do
+      path = synced(mode: :keyset, size: 2)
+
       conn
-      |> visit(synced(mode: :keyset, size: 2) <> "?after=not-a-cursor")
+      |> visit(path <> "?after=not-a-cursor")
       |> titles(["Abbey", "Blue"], timeout: 500)
+      |> assert_path(path, query_params: %{}, timeout: 500)
     end
 
     test "when the parent changes the declarations and the page resets, so does the URL",
@@ -693,6 +786,17 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_has("#albums td", text: "Abbey")
     end
 
+    test "an argument's value cleared leaves the URL", %{conn: conn} do
+      path = by_genre(type: :text)
+
+      conn
+      |> visit(path)
+      |> fill_in("Genre", with: "rock")
+      |> assert_path(path, query_params: %{genre: "rock"}, timeout: 500)
+      |> fill_in("Genre", with: "")
+      |> assert_path(path, query_params: %{}, timeout: 500)
+    end
+
     test "an argument with a `param` goes by it in the URL", %{conn: conn} do
       path =
         Fixture.register(fn assigns ->
@@ -774,19 +878,13 @@ defmodule Cinder.Next.CollectionTest do
       |> checked(0)
     end
 
-    test "a record that can't be selected has a disabled box, and a forged event for it is ignored",
-         %{conn: conn} do
+    test "a record that can't be selected has a disabled box", %{conn: conn} do
       abbey = album_id("Abbey")
       blue = album_id("Blue")
 
       conn
       |> visit(selectable(&(&1.genre == :jazz)))
       |> assert_has("#albums-select-#{abbey}[disabled]")
-      # Blue's box, sending Abbey's id
-      |> unwrap(fn view ->
-        view |> element("#albums-select-#{blue}") |> render_click(%{"id" => abbey})
-      end)
-      |> checked(0)
       |> click_box("#albums th input")
       |> checked(1)
       |> assert_has("#albums-select-#{blue}[checked]")
@@ -813,47 +911,50 @@ defmodule Cinder.Next.CollectionTest do
 
     # Arguments decide what the read action reads, as the action does, so a bulk
     # action only reaches records selected under the arguments it runs with
-    test "changing an argument clears the selection, synced to the URL or not",
-         %{conn: conn} do
+    # Synced, as that's the longer way round: the new argument comes back from the URL
+    test "changing an argument clears the selection", %{conn: conn} do
       blue = album_id("Blue")
-      cleared = %{selected_ids: MapSet.new(), selected_count: 0, component_id: "albums"}
 
-      for url? <- [false, true] do
-        path =
-          Fixture.register(
-            fn assigns ->
-              assigns = assign(assigns, synced: if(url?, do: assigns.url_state))
+      cleared = %{
+        selected_ids: MapSet.new(),
+        selected_count: 0,
+        all_matching?: false,
+        excluded_ids: MapSet.new(),
+        component_id: "albums"
+      }
 
-              ~H"""
-              <Cinder.Next.collection
-                id="albums"
-                resource={Music.Album}
-                action={:by_genre}
-                selectable
-                url_state={@synced}
-                on_selection_change={:picked}
-              >
-                <:field :let={album} name="title" filter>{album.title}</:field>
-                <:argument name="genre" />
-              </Cinder.Next.collection>
-              """
-            end,
-            forward_to: self()
-          )
+      path =
+        Fixture.register(
+          fn assigns ->
+            ~H"""
+            <Cinder.Next.collection
+              id="albums"
+              resource={Music.Album}
+              action={:by_genre}
+              selectable
+              url_state={@url_state}
+              on_selection_change={:picked}
+            >
+              <:field :let={album} name="title" filter>{album.title}</:field>
+              <:argument name="genre" />
+            </Cinder.Next.collection>
+            """
+          end,
+          forward_to: self()
+        )
 
-        conn
-        |> visit(path)
-        |> choose("Jazz")
-        |> click_box("#albums-select-#{blue}")
-        |> fill_in("Title", with: "B")
-        |> checked(1)
-        |> choose("Rock")
-        |> choose("Jazz")
-        |> checked(0)
+      conn
+      |> visit(path)
+      |> choose("Jazz")
+      |> click_box("#albums-select-#{blue}")
+      |> fill_in("Title", with: "B")
+      |> checked(1)
+      |> choose("Rock")
+      |> choose("Jazz")
+      |> checked(0)
 
-        assert_receive {:picked, %{selected_count: 1}}
-        assert_receive {:picked, ^cleared}
-      end
+      assert_receive {:picked, %{selected_count: 1}}
+      assert_receive {:picked, ^cleared}
     end
 
     test "the parent hears of each change, and only of changes", %{conn: conn} do
@@ -864,7 +965,14 @@ defmodule Cinder.Next.CollectionTest do
       refute_received {:picked, _payload}
       click_box(session, "#albums-select-#{blue}")
 
-      expected = %{selected_ids: MapSet.new([blue]), selected_count: 1, component_id: "albums"}
+      expected = %{
+        selected_ids: MapSet.new([blue]),
+        selected_count: 1,
+        all_matching?: false,
+        excluded_ids: MapSet.new(),
+        component_id: "albums"
+      }
+
       assert_receive {:picked, ^expected}
     end
   end
@@ -873,7 +981,17 @@ defmodule Cinder.Next.CollectionTest do
     # A page each, to select records on more than one
     defp with_bulk_actions(opts \\ []) do
       {on_change, on_result} = if opts[:forward_to], do: {:picked, :done}, else: {nil, nil}
-      pagination = [size: 1, mode: Keyword.get(opts, :mode, :offset)]
+      pagination = [size: 1]
+      test = self()
+
+      # Runs until the test lets it finish
+      wait = fn _query, _opts ->
+        send(test, {:waiting, self()})
+
+        receive do
+          :finish -> :done
+        end
+      end
 
       Fixture.register(
         fn assigns ->
@@ -881,8 +999,10 @@ defmodule Cinder.Next.CollectionTest do
             assign(assigns,
               on_change: on_change,
               on_result: on_result,
+              confirm: opts[:confirm],
               pagination: pagination,
-              synced: if(opts[:url?], do: assigns.url_state)
+              synced: if(opts[:url?], do: assigns.url_state),
+              wait: wait
             )
 
           ~H"""
@@ -895,12 +1015,14 @@ defmodule Cinder.Next.CollectionTest do
             url_state={@synced}
             on_selection_change={@on_change}
             on_bulk_action_result={@on_result}
+            bulk_action_confirm={@confirm}
           >
             <:field :let={album} name="title" filter>{album.title}</:field>
             <:bulk_action action={:remaster} />
             <:bulk_action action={:destroy} label="Delete" confirm="Delete {count} albums?" />
             <:bulk_action name="remove" action={:destroy} />
             <:bulk_action name="fail" action={&fail/2} />
+            <:bulk_action name="wait" action={@wait} />
           </Cinder.Next.collection>
           """
         end,
@@ -999,7 +1121,8 @@ defmodule Cinder.Next.CollectionTest do
     end
 
     # From tampering: the buttons only send declared names, and are disabled until
-    # something's selected
+    # something's selected. The rule is `BulkActionState`'s; this checks the selected
+    # count reaches it.
     test "an action that isn't declared, or with nothing selected, is ignored", %{conn: conn} do
       conn
       |> visit(with_bulk_actions(forward_to: self()))
@@ -1015,7 +1138,34 @@ defmodule Cinder.Next.CollectionTest do
       assert remastered() == []
     end
 
-    # Rather than an empty page with records before it. Synced, the URL follows.
+    # One at a time: the bar's actions are disabled while one runs, so these are from
+    # tampering. The rule is `BulkActionState`'s; this checks the state reaches it.
+    test "while an action runs, cancelling it or starting another changes nothing",
+         %{conn: conn} do
+      session =
+        conn
+        |> visit(with_bulk_actions(forward_to: self()))
+        |> click_box("#albums-select-#{album_id("Abbey")}")
+        |> click_button("Wait")
+
+      assert_receive {:waiting, action}
+
+      session
+      |> unwrap(fn view ->
+        target = with_target(view, "#albums")
+        render_click(target, "cancel_bulk_action", %{})
+        render_click(target, "bulk_action", %{"name" => "remaster"})
+      end)
+      |> assert_has("#albums-bulk button[disabled]", text: "Remaster")
+
+      send(action, :finish)
+      assert_receive {:done, %{bulk_action: "wait", status: :success, result: :done}}
+      assert remastered() == []
+    end
+
+    # Rather than an empty page with records before it. Where to is
+    # `State.leave_emptied_page/3`'s; this checks it's asked after an action, and the
+    # URL follows.
     test "an action that empties the last pages shows the last page with records",
          %{conn: conn} do
       generate(album(title: "Cold"))
@@ -1036,29 +1186,169 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_path(path, query_params: %{}, timeout: 500)
     end
 
-    # A cursor can't say where the last page is
-    test "with keyset pages, an action that empties the page shows the first",
+    # Rendered open, so it works without the hook, which makes it a modal
+    # (LiveViewTest doesn't run hooks)
+    test "an action with a confirm asks first in a dialog, with the bar's actions disabled, and Cancel closes it",
          %{conn: conn} do
-      conn
-      |> visit(with_bulk_actions(forward_to: self(), mode: :keyset))
-      |> click_button("Next page")
-      |> click_box("#albums-select-#{album_id("Blue")}")
-      |> click_button("Remove")
-      |> tap(fn _session -> assert_receive {:done, %{status: :success}} end)
-      |> assert_has("#albums td", text: "Abbey")
-      |> assert_has("#albums tbody tr", count: 1)
-    end
-
-    # A declared confirm is never skipped, so until confirming is built, an action
-    # that has one doesn't run
-    test "an action with a confirm doesn't run without one", %{conn: conn} do
       conn
       |> visit(with_bulk_actions(forward_to: self()))
       |> click_box("#albums-select-#{album_id("Abbey")}")
-      |> click_button("Delete")
+      |> click_button("Next page")
+      |> click_box("#albums-select-#{album_id("Blue")}")
+      |> click_button("#albums-bulk button", "Delete")
+      |> assert_has("dialog#albums-bulk-confirm[open] p", text: "Delete 2 albums?")
+      |> assert_has("#albums-bulk-confirm button:first-of-type[autofocus]", text: "Cancel")
+      |> assert_has("#albums-bulk-confirm button:last-of-type", text: "Delete")
+      |> assert_has("#albums-bulk button[disabled]", text: "Remaster")
+      |> click_button("Cancel")
+      |> refute_has("#albums-bulk-confirm")
+      |> refute_has("#albums-bulk button[disabled]")
+      |> assert_has("#albums-bulk-count", text: "2 selected")
 
       refute_receive {:done, _payload}
-      assert Enum.any?(Ash.read!(Music.Album), &(&1.title == "Abbey"))
+      assert Enum.count(Ash.read!(Music.Album)) == 2
+    end
+
+    # A slow double click on an action would land its second click on confirming. How
+    # soon is too soon is `BulkActionState`'s; this checks the delay reaches it.
+    test "confirming at once is ignored", %{conn: conn} do
+      conn
+      |> visit(with_bulk_actions())
+      |> click_box("#albums-select-#{album_id("Abbey")}")
+      |> click_button("#albums-bulk button", "Delete")
+      |> click_button("#albums-bulk-confirm button", "Delete")
+      |> assert_has("#albums-bulk-confirm")
+    end
+
+    # A developer's own confirm, as an app's would be
+    defp ask(assigns) do
+      ~H"""
+      <div id={@id} data-name={@name} data-count={@count}>
+        <p>{@message}</p>
+        <button phx-click={@cancel}>No</button>
+        <button phx-click={@confirm}>Yes, {@label}</button>
+      </div>
+      """
+    end
+
+    defp ask_differently(assigns) do
+      ~H"""
+      <div id={@id}>Sure?</div>
+      """
+    end
+
+    test "a collection's own confirm component asks instead, and its buttons answer",
+         %{conn: conn} do
+      conn
+      |> visit(with_bulk_actions(forward_to: self(), confirm: &ask/1))
+      |> click_box("#albums-select-#{album_id("Abbey")}")
+      |> click_button("#albums-bulk button", "Delete")
+      |> assert_has("#albums-bulk-confirm[data-name=destroy][data-count='1'] p",
+        text: "Delete 1 albums?"
+      )
+      |> refute_has("dialog")
+      |> click_button("No")
+      |> refute_has("#albums-bulk-confirm")
+      |> click_button("#albums-bulk button", "Delete")
+      |> tap(fn _session ->
+        Process.sleep(Application.fetch_env!(:cinder, :bulk_action_confirm_delay))
+      end)
+      |> click_button("Yes, Delete")
+      |> tap(fn _session ->
+        assert_receive {:done, %{bulk_action: "destroy", status: :success}}
+      end)
+
+      assert Enum.map(Ash.read!(Music.Album), & &1.title) == ["Blue"]
+    end
+
+    # A component that isn't modal leaves the bar usable, and there's nothing left to
+    # confirm. The rule is `BulkActionState`'s; this checks a selection change reaches it.
+    test "clearing the selection while a confirm waits dismisses it", %{conn: conn} do
+      conn
+      |> visit(with_bulk_actions(confirm: &ask/1))
+      |> click_box("#albums-select-#{album_id("Abbey")}")
+      |> click_button("#albums-bulk button", "Delete")
+      |> click_button("Clear selection")
+      |> refute_has("#albums-bulk-confirm")
+    end
+
+    # The rule is `BulkActionState.carry_over/2`'s; this checks the rebuild hands it the
+    # new bulk actions
+    test "a confirm waiting when the parent changes its action asks the new question, and goes with the action",
+         %{conn: conn} do
+      path =
+        Fixture.register(fn assigns ->
+          ~H"""
+          <Cinder.Next.collection id="albums" query={Ash.Query.sort(Music.Album, :title)} selectable>
+            <:field :let={album} name="title">{album.title}</:field>
+            <:bulk_action action={:remaster} />
+            <:bulk_action
+              :if={assigns[:delete] != :removed}
+              action={:destroy}
+              label="Delete"
+              confirm={assigns[:delete] || "Delete {count} albums?"}
+            />
+          </Cinder.Next.collection>
+          """
+        end)
+
+      session =
+        conn
+        |> visit(path)
+        |> click_box("#albums-select-#{album_id("Abbey")}")
+        |> click_button("#albums-bulk button", "Delete")
+
+      parent = fn change ->
+        unwrap(session, fn view ->
+          Fixture.run(view, change)
+          render(view)
+        end)
+      end
+
+      parent.(&assign(&1, :delete, "Really delete {count}?"))
+      |> assert_has("#albums-bulk-confirm p", text: "Really delete 1?")
+
+      parent.(&assign(&1, :delete, :removed))
+      |> refute_has("#albums-bulk-confirm")
+      |> refute_has("#albums-bulk button[disabled]", text: "Remaster")
+    end
+
+    test "the app's confirm component is used everywhere, unless a collection gives its own",
+         %{conn: conn} do
+      Application.put_env(:cinder, :bulk_action_confirm, &ask_differently/1)
+      on_exit(fn -> Application.delete_env(:cinder, :bulk_action_confirm) end)
+
+      conn
+      |> visit(with_bulk_actions())
+      |> click_box("#albums-select-#{album_id("Abbey")}")
+      |> click_button("#albums-bulk button", "Delete")
+      |> assert_has("#albums-bulk-confirm", text: "Sure?")
+
+      conn
+      |> visit(with_bulk_actions(confirm: &ask/1))
+      |> click_box("#albums-select-#{album_id("Abbey")}")
+      |> click_button("#albums-bulk button", "Delete")
+      |> assert_has("#albums-bulk-confirm p", text: "Delete 1 albums?")
+    end
+
+    # From tampering. When a confirm is ignored is `BulkActionState`'s; this checks the
+    # name confirmed reaches it.
+    test "confirming another action than the one waiting is ignored", %{conn: conn} do
+      conn
+      |> visit(with_bulk_actions(forward_to: self()))
+      |> click_box("#albums-select-#{album_id("Abbey")}")
+      |> click_button("#albums-bulk button", "Delete")
+      |> tap(fn _session ->
+        Process.sleep(Application.fetch_env!(:cinder, :bulk_action_confirm_delay))
+      end)
+      |> unwrap(fn view ->
+        render_click(with_target(view, "#albums"), "confirm_bulk_action", %{"name" => "remaster"})
+      end)
+      |> assert_has("#albums-bulk-confirm")
+
+      refute_receive {:done, _payload}
+      assert Enum.count(Ash.read!(Music.Album)) == 2
+      assert remastered() == []
     end
 
     # An inline function closing over the parent's assigns is new on every change to
@@ -1084,6 +1374,146 @@ defmodule Cinder.Next.CollectionTest do
         render(view)
       end)
       |> assert_has("#albums tbody tr", count: 2)
+    end
+  end
+
+  describe "selecting all matching" do
+    # Two a page, so more can match than the page shows. Abbey (rock) and Blue (jazz)
+    # are the setup's.
+    defp more_albums do
+      for {title, genre} <- [{"Cold", :jazz}, {"Dawn", :rock}, {"Echo", :jazz}] do
+        generate(album(title: title, genre: genre))
+      end
+    end
+
+    defp all_matching(opts \\ []) do
+      Fixture.register(
+        fn assigns ->
+          assigns =
+            assign(assigns,
+              pagination: [size: 2, mode: Keyword.get(opts, :mode, :offset)],
+              selectable: Map.get(assigns, :selectable, true)
+            )
+
+          ~H"""
+          <Cinder.Next.collection
+            id="albums"
+            query={Ash.Query.sort(Music.Album, :title)}
+            action="paginated"
+            pagination={@pagination}
+            selectable={@selectable}
+            on_selection_change={:picked}
+            on_bulk_action_result={:done}
+          >
+            <:field :let={album} name="title" sort search>{album.title}</:field>
+            <:field name="genre" filter column={false} />
+            <:bulk_action action={:destroy} label="Delete" confirm="Delete {count} albums?" />
+            <:bulk_action name="remove" action={:destroy} />
+          </Cinder.Next.collection>
+          """
+        end,
+        forward_to: self()
+      )
+    end
+
+    defp titles_left, do: Music.Album |> Ash.read!() |> Enum.map(& &1.title) |> Enum.sort()
+
+    defp select_all_matching(view) do
+      render_click(with_target(view, "#albums"), "select_all_matching", %{})
+    end
+
+    test "is offered once the whole page is selected, and selects every matching record",
+         %{conn: conn} do
+      more_albums()
+
+      conn
+      |> visit(all_matching())
+      |> refute_has("#albums-bulk button", text: "matching")
+      |> click_box("#albums th input")
+      |> assert_has("#albums-bulk-count", text: "2 selected")
+      |> click_button("Select all 5 matching")
+      |> assert_has("#albums-bulk-count", text: "All 5 selected")
+      |> refute_has("#albums-bulk button", text: "matching")
+      |> checked(2)
+      |> click_button("Next page")
+      |> checked(2)
+      |> assert_has("#albums th input[checked]")
+
+      assert_receive {:picked,
+                      %{
+                        selected_ids: none,
+                        selected_count: 5,
+                        all_matching?: true,
+                        excluded_ids: none,
+                        component_id: "albums"
+                      }}
+
+      assert none == MapSet.new()
+    end
+
+    # The confirm and the result count what's selected, and the action leaves out the
+    # record unticked, on whichever page
+    test "a record unticked is left out, and the action runs on every other matching one",
+         %{conn: conn} do
+      more_albums()
+      blue = album_id("Blue")
+
+      conn
+      |> visit(all_matching())
+      |> choose("Jazz")
+      |> click_box("#albums th input")
+      |> click_button("Select all 3 matching")
+      |> click_box("#albums-select-#{blue}")
+      |> assert_has("#albums-bulk-count", text: "2 selected")
+      |> refute_has("#albums th input[checked]")
+      |> click_button("#albums-bulk button", "Delete")
+      |> assert_has("#albums-bulk-confirm p", text: "Delete 2 albums?")
+      |> tap(fn _session ->
+        Process.sleep(Application.fetch_env!(:cinder, :bulk_action_confirm_delay))
+      end)
+      |> click_button("#albums-bulk-confirm button", "Delete")
+      |> tap(fn _session ->
+        assert_receive {:done, %{status: :success, selected_count: 2}}
+      end)
+      |> refute_has("#albums-bulk-count")
+
+      assert titles_left() == ["Abbey", "Blue", "Dawn"]
+
+      assert_receive {:picked, %{all_matching?: true, excluded_ids: excluded, selected_count: 2}}
+
+      assert excluded == MapSet.new([blue])
+    end
+
+    # When it isn't offered is `RowSelection`'s; keyset pages have no count to offer it
+    # with. Nor can it be forced.
+    test "isn't offered when it can't be, nor forced", %{conn: conn} do
+      more_albums()
+
+      conn
+      |> visit(all_matching(mode: :keyset))
+      |> click_box("#albums th input")
+      |> assert_has("#albums-bulk-count")
+      |> refute_has("#albums-bulk button", text: "matching")
+      |> unwrap(&select_all_matching/1)
+      |> refute_has("#albums-bulk-count", text: "All")
+    end
+
+    # Nor can a function decide which of them a bulk action runs on. The rule is
+    # `RowSelection.carry_over/4`'s; this checks the rebuild hands it the new `selectable`.
+    test "ends when the parent makes `selectable` a function", %{conn: conn} do
+      more_albums()
+
+      conn
+      |> visit(all_matching())
+      |> click_box("#albums th input")
+      |> click_button("Select all 5 matching")
+      |> unwrap(fn view ->
+        Fixture.run(view, &assign(&1, :selectable, fn album -> album.genre == :jazz end))
+        render(view)
+      end)
+      |> refute_has("#albums-bulk-count")
+
+      assert_receive {:picked, %{all_matching?: false, selected_count: 0}}
     end
   end
 end

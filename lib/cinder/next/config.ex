@@ -18,8 +18,9 @@ defmodule Cinder.Next.Config do
   # `filters` are the filter controls: the column map their type renders from (with
   # the column's label), and the type's module.
   # `search` is the search box's options, or `nil` when no field is searchable.
-  # `pagination` is the mode, the page size and whether to count, or `nil` when the
-  # action doesn't page.
+  # `pagination` is the mode, the page size, the sizes the user can choose from (only
+  # it, if none were given) and whether to count, or `nil` when the action doesn't
+  # page.
   # `action` is the read action's name, and `arguments` the ones the user gives
   # values for. `argument_inputs` are their controls, as `filters` are.
   # `selectable` is as given (`false`, `true` or a function), and `primary_key` the
@@ -35,6 +36,8 @@ defmodule Cinder.Next.Config do
     :primary_key,
     :on_selection_change,
     :on_bulk_action_result,
+    :bulk_action_confirm,
+    :initial_load,
     selectable: false,
     columns: [],
     fields: [],
@@ -58,10 +61,24 @@ defmodule Cinder.Next.Config do
      argument_slots, bulk_action_slots}
   end
 
+  @doc """
+  Whether two configs read the same records, given the same query, so a rebuild can
+  keep the page and the selection. A new search function could find others, so it
+  counts. A bulk action's function or `selectable` doesn't: one written in the
+  template closes over the parent's assigns, so it's new on every render. The docs
+  ask for a named search function for the same reason.
+  """
+  def same_records?(%__MODULE__{} = old, %__MODULE__{} = new) do
+    keys = [:source, :action, :actor, :tenant, :scope, :query_opts]
+
+    Map.take(old, keys) == Map.take(new, keys) and old.search[:fn] == new.search[:fn] and
+      old.pagination[:mode] == new.pagination[:mode]
+  end
+
   def build(options, field_slots, argument_slots, bulk_action_slots) do
     # The schema fills in the page size, so whether `pagination` was given is asked first
     paginate? = options[:pagination] not in [nil, []]
-    options = Schema.validate_collection!(options)
+    options = options |> with_app_defaults() |> Schema.validate_collection!()
     source = source!(options[:resource], options[:query])
     action = action!(source, options)
     declared = field_slots |> Enum.map(&declare!/1) |> once_each!()
@@ -85,15 +102,26 @@ defmodule Cinder.Next.Config do
       scope: options[:scope],
       query_opts: options[:query_opts] || [],
       selectable: options[:selectable],
+      initial_load: options[:initial_load],
       primary_key: primary_key!(source, options),
       on_selection_change: options[:on_selection_change],
       on_bulk_action_result: options[:on_bulk_action_result],
+      bulk_action_confirm: options[:bulk_action_confirm],
       bulk_actions: bulk_actions!(source, bulk_action_slots, options),
       sort: %{
         mode: options[:sort][:mode] || :additive,
         default: default_sort(source, fields, columns)
       }
     }
+  end
+
+  # The app's defaults (its confirm component, when the first page is read), unless
+  # the collection gives its own, checked as the collection's would be. With neither
+  # (`nil`, which the schema drops as not given), Cinder's own is used.
+  defp with_app_defaults(options) do
+    confirm = options[:bulk_action_confirm] || Application.get_env(:cinder, :bulk_action_confirm)
+    initial_load = options[:initial_load] || Application.get_env(:cinder, :default_initial_load)
+    Keyword.merge(options, bulk_action_confirm: confirm, initial_load: initial_load)
   end
 
   # A `<:field>` declares its field, so a second one for a name would contradict it
@@ -320,7 +348,12 @@ defmodule Cinder.Next.Config do
 
     case first_mode(source, action, modes) do
       {:ok, mode, %{count?: count?}} ->
-        %{mode: mode, size: options[:pagination][:size], count?: mode == :offset and count?}
+        %{
+          mode: mode,
+          size: options[:pagination][:size],
+          size_options: size_options!(options),
+          count?: mode == :offset and count?
+        }
 
       {:error, message} when paginate? ->
         raise ArgumentError,
@@ -330,6 +363,20 @@ defmodule Cinder.Next.Config do
       {:error, _message} ->
         nil
     end
+  end
+
+  # Only `size` when there's nothing to choose from
+  defp size_options!(options) do
+    size = options[:pagination][:size]
+    size_options = options[:pagination][:size_options] || [size]
+
+    if size not in size_options do
+      raise ArgumentError,
+            ~s(<Cinder.Next.collection id="#{options[:id]}">: `pagination`'s `size` \(#{size}\) ) <>
+              "must be one of its `size_options` (#{inspect(size_options, charlists: :as_lists)})"
+    end
+
+    size_options
   end
 
   # The first mode the action can page by, or the last one's error
