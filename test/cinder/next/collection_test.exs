@@ -15,6 +15,7 @@ defmodule Cinder.Next.CollectionTest do
       live: 2,
       render: 1,
       render_async: 1,
+      render_change: 3,
       render_click: 1,
       render_click: 2,
       render_click: 3,
@@ -474,12 +475,34 @@ defmodule Cinder.Next.CollectionTest do
       assert html =~ ~s(aria-busy="true")
       assert html =~ "Loading..."
       refute html =~ "Abbey"
+      refute html =~ "No results found"
 
       conn
       |> visit(path)
       |> assert_has("#albums td", text: "Abbey", timeout: 1000)
       |> refute_has("#albums table[aria-busy]")
       |> refute_has("#albums", text: "Loading...")
+    end
+
+    test "the <:loading> slot instead", %{conn: conn} do
+      path =
+        Fixture.register(fn assigns ->
+          ~H"""
+          <Cinder.Next.collection id="albums" resource={Music.Album}>
+            <:field :let={album} name="title">{album.title}</:field>
+            <:loading><p>Fetching albums</p></:loading>
+          </Cinder.Next.collection>
+          """
+        end)
+
+      html = page_html(conn, path)
+      assert html =~ "<p>Fetching albums</p>"
+      refute html =~ "Loading..."
+
+      conn
+      |> visit(path)
+      |> assert_has("#albums td", text: "Abbey", timeout: 1000)
+      |> refute_has("#albums", text: "Fetching albums")
     end
 
     test "read first, by the collection or the app's default, the page's HTML has the rows",
@@ -520,6 +543,153 @@ defmodule Cinder.Next.CollectionTest do
       html = render_async(view)
       refute html =~ "aria-busy"
       assert html =~ ~r/Blue.*Abbey/s
+    end
+
+    # A read still running when it's no longer wanted is superseded, whatever replaces it
+    test "a required argument cleared while its read runs shows nothing from that read",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, by_genre(type: :text))
+      render_async(view)
+
+      test_pid = self()
+      allow(Ash, test_pid, view.pid)
+
+      expect(Ash, :read, fn query, opts ->
+        send(test_pid, {:reading, self()})
+
+        receive do
+          :continue -> call_original(Ash, :read, [query, opts])
+        after
+          5_000 -> raise "the test didn't let the read finish"
+        end
+      end)
+
+      filter = fn genre ->
+        view
+        |> with_target("#albums")
+        |> render_change("filter", %{"filters" => %{"genre" => genre}})
+      end
+
+      filter.("rock")
+      assert_receive {:reading, read}
+      filter.("")
+
+      send(read, :continue)
+      refute render_async(view) =~ "Abbey"
+    end
+
+    # The engine catches what raises, so only an exit is left to crash the read
+    @tag :capture_log
+    test "a read that crashes is a failure", %{conn: conn} do
+      {:ok, view, _html} = live(conn, loading())
+      render_async(view)
+
+      allow(Ash, self(), view.pid)
+      expect(Ash, :read, fn _query, _opts -> exit(:boom) end)
+
+      view |> element("#albums th button", "Title") |> render_click()
+      assert render_async(view) =~ "An error occurred while loading data"
+    end
+  end
+
+  describe "failed reads" do
+    defp fail_next_read(view) do
+      allow(Ash, self(), view.pid)
+      stub(Ash, :read, &call_original(Ash, :read, [&1, &2]))
+      expect(Ash, :read, fn _query, _opts -> {:error, Ash.Error.to_error_class("Simulated")} end)
+    end
+
+    # The engine logs the failed read
+    @tag :capture_log
+    test "show an error and a way to try again, with no rows, through a parent's re-render",
+         %{conn: conn} do
+      path =
+        Fixture.register(fn assigns ->
+          ~H"""
+          <Cinder.Next.collection id="albums" resource={Music.Album} action={:failing}>
+            <:field :let={album} name="title" label={assigns[:label]}>{album.title}</:field>
+          </Cinder.Next.collection>
+          """
+        end)
+
+      conn
+      |> visit(path)
+      |> assert_has("#albums [role=alert]", text: "An error occurred while loading data")
+      |> assert_has("#albums button", text: "Try again")
+      |> refute_has("#albums tbody tr")
+      |> unwrap(fn view ->
+        Fixture.run(view, &assign(&1, :label, "Name"))
+        render(view)
+      end)
+      |> assert_has("#albums th", text: "Name")
+      |> assert_has("#albums [role=alert]", text: "An error occurred while loading data")
+    end
+
+    @tag :capture_log
+    test "the <:error> slot instead, which can try again", %{conn: conn} do
+      path =
+        Fixture.register(fn assigns ->
+          ~H"""
+          <Cinder.Next.collection id="albums" query={Ash.Query.sort(Music.Album, :title)}>
+            <:field :let={album} name="title" sort>{album.title}</:field>
+            <:error :let={error}>
+              <p>Albums failed to load</p>
+              <button type="button" phx-click={error.retry}>Again</button>
+            </:error>
+          </Cinder.Next.collection>
+          """
+        end)
+
+      {:ok, view, _html} = live(conn, path)
+      fail_next_read(view)
+
+      html = view |> element("#albums th button", "Title") |> render_click()
+      assert html =~ "Albums failed to load"
+      refute html =~ "An error occurred while loading data"
+
+      html = view |> element("#albums button", "Again") |> render_click()
+      refute html =~ "Albums failed to load"
+      assert html =~ ~r/Blue.*Abbey/s
+    end
+
+    test "a retry when nothing failed reads nothing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, loading())
+      reject(Ash, :read, 2)
+
+      assert view |> with_target("#albums") |> render_click("retry", %{}) =~ "Abbey"
+    end
+  end
+
+  # What's applied is `State.applied/2`'s
+  describe "no records" do
+    test "says so", %{conn: conn} do
+      conn
+      |> visit(filterable())
+      |> refute_has("#albums", text: "No results found")
+      |> fill_in("Title", with: "zz")
+      |> refute_has("#albums tbody tr")
+      |> assert_has("#albums", text: "No results found")
+    end
+
+    test "the <:empty> slot instead, with what's applied", %{conn: conn} do
+      path =
+        Fixture.register(fn assigns ->
+          ~H"""
+          <Cinder.Next.collection id="albums" resource={Music.Album}>
+            <:field :let={album} name="title" filter>{album.title}</:field>
+            <:empty :let={empty}>
+              <p>Filtered: {to_string(empty.filtered?)}, title: {empty.filters["title"]}</p>
+            </:empty>
+          </Cinder.Next.collection>
+          """
+        end)
+
+      conn
+      |> visit(path)
+      |> refute_has("#albums p", text: "Filtered")
+      |> fill_in("Title", with: "zz")
+      |> assert_has("#albums p", text: "Filtered: true, title: zz")
+      |> refute_has("#albums", text: "No results found")
     end
   end
 
@@ -676,8 +846,6 @@ defmodule Cinder.Next.CollectionTest do
       |> titles(["Abbey", "Blue"])
     end
 
-    # The engine logs the failed read
-    @tag :capture_log
     test "a cursor that isn't one shows the first page, and leaves the URL", %{conn: conn} do
       path = synced(mode: :keyset, size: 2)
 
@@ -685,6 +853,25 @@ defmodule Cinder.Next.CollectionTest do
       |> visit(path <> "?after=not-a-cursor")
       |> titles(["Abbey", "Blue"], timeout: 500)
       |> assert_path(path, query_params: %{}, timeout: 500)
+    end
+
+    # A failed page isn't left as an emptied one is: its records are unknown. Only a
+    # cursor that isn't one goes back to the first page.
+    @tag :capture_log
+    test "by keyset, a failed read keeps its page in the URL, to try again", %{conn: conn} do
+      path = synced(mode: :keyset, size: 2)
+
+      conn
+      |> visit(path)
+      |> unwrap(fn view ->
+        fail_next_read(view)
+        render(view)
+      end)
+      |> click_button("#albums nav button", "Next page")
+      |> assert_has("#albums [role=alert]", text: "An error occurred while loading data")
+      |> refute_path(path, query_params: %{}, timeout: 500)
+      |> click_button("#albums button", "Try again")
+      |> titles(["Cold", "Dark"])
     end
 
     test "when the parent changes the declarations and the page resets, so does the URL",
@@ -758,8 +945,6 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_has("#albums td", text: "Blue")
     end
 
-    # `QueryBuilder` logs every failed read, even one the user just needs to fix
-    @tag :capture_log
     test "a value the action can't use shows its message under the input, and no records",
          %{conn: conn} do
       conn
@@ -767,9 +952,47 @@ defmodule Cinder.Next.CollectionTest do
       |> fill_in("Genre", with: "polka")
       |> assert_has("#albums-filters", text: "is invalid")
       |> refute_has("#albums tbody tr")
+      |> refute_has("#albums", text: "No results found")
       |> fill_in("Genre", with: "rock")
       |> refute_has("#albums-filters", text: "is invalid")
       |> assert_has("#albums td", text: "Abbey")
+    end
+
+    # The app's default, which an attr overrides as any app default does
+    test "a message goes through translate_error, as an app's forms' do", %{conn: conn} do
+      Cinder.TestHelpers.put_app_env(:translate_error, fn {message, _vars} ->
+        "Translated: #{message}"
+      end)
+
+      conn
+      |> visit(by_genre(type: :text))
+      |> fill_in("Genre", with: "polka")
+      |> assert_has("#albums-filters", text: "Translated: is invalid")
+    end
+
+    # There's nothing to show past the first page, as there would be no records
+    test "a value the action can't use, from the URL past the first page, shows the first",
+         %{conn: conn} do
+      path =
+        Fixture.register(fn assigns ->
+          ~H"""
+          <Cinder.Next.collection
+            id="albums"
+            resource={Music.Album}
+            action={:by_genre}
+            pagination={[size: 1]}
+            url_state={@url_state}
+          >
+            <:field :let={album} name="title">{album.title}</:field>
+            <:argument name="genre" input={[type: :text]} />
+          </Cinder.Next.collection>
+          """
+        end)
+
+      conn
+      |> visit(path <> "?genre=polka&page=2")
+      |> assert_has("#albums-filters", text: "is invalid")
+      |> assert_path(path, query_params: %{genre: "polka"}, timeout: 500)
     end
 
     test "an argument's value goes in the URL, and comes back from it", %{conn: conn} do

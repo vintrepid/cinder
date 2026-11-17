@@ -177,6 +177,7 @@ msgstr "Ingen alternativer tilgjengelig"
 
 #: lib/cinder/collection.ex
 #: lib/cinder/filters/autocomplete.ex
+#: lib/cinder/next/collection.ex
 #, elixir-autogen, elixir-format
 msgid "No results found"
 msgstr "Ingen resultater funnet"
@@ -203,6 +204,7 @@ msgid "Type to search more options..."
 msgstr "Skriv for å søke flere alternativer..."
 
 #: lib/cinder/collection.ex
+#: lib/cinder/next/collection.ex
 #, elixir-autogen, elixir-format
 msgid "An error occurred while loading data"
 msgstr "Det oppstod en feil under lasting av data"
@@ -251,3 +253,8 @@ msgid "Select all %{count} matching"
 msgid_plural "Select all %{count} matching"
 msgstr[0] "Velg alle %{count} treff"
 msgstr[1] "Velg alle %{count} treff"
+
+#: lib/cinder/next/collection.ex
+#, elixir-autogen, elixir-format
+msgid "Try again"
+msgstr "Prøv igjen"

@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 Cinder contributors <https://github.com/sevenseacat/cinder/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
+defmodule Cinder.Next.ReadState do
+  @moduledoc false
+  # Where a collection's read of its records is, and every rule about it, as pure
+  # functions: `:unread` (before the first), `:loading`, `:loaded`,
+  # `{:invalid, errors}` (argument values the action can't use, as messages by
+  # input, or required arguments missing, with nothing to say yet), or
+  # `{:failed, reason}` (anything else, for developers). The records shown are
+  # `Cinder.Next.Collection`'s, as the old ones stay while loading.
+
+  alias Cinder.Engine.{Error, Page}
+
+  @doc """
+  Whether a read is done before the page renders: always when Ash's
+  `disable_async?` is set (as apps do in their tests), and the first with
+  `initial_load: :sync`.
+  """
+  def read_first?(state, initial_load, disable_async?) do
+    disable_async? or (initial_load == :sync and state == :unread)
+  end
+
+  @doc """
+  A read's result (from `Cinder.Engine.run/4`, or the task's exit) as the state
+  and the records to show. Argument errors' messages go through `translate_error`
+  (given `{message, vars}`), or have the vars filled into Ash's English without one.
+  """
+  def done(result, translate_error \\ nil)
+
+  def done({:ok, %Page{} = page}, _translate_error), do: {:loaded, page}
+
+  def done({:error, %Error{reason: nil, inputs: inputs}}, translate_error) do
+    message = translate_error || (&message/1)
+    errors = Map.new(inputs, fn {name, errors} -> {name, Enum.map(errors, message)} end)
+    {{:invalid, errors}, %Page{}}
+  end
+
+  def done({:error, %Error{reason: reason}}, _translate_error), do: {{:failed, reason}, %Page{}}
+  def done({:exit, reason}, _translate_error), do: {{:failed, reason}, %Page{}}
+
+  @doc "Whether a read is under way."
+  def loading?(state), do: state == :loading
+
+  @doc "Whether the last read gave records (or none), rather than an error."
+  def loaded?(state), do: state == :loaded
+
+  @doc "Whether the last read failed, so it can be tried again."
+  def failed?(state), do: match?({:failed, _reason}, state)
+
+  @doc "Each input's messages, when the action can't use its value."
+  def errors({:invalid, errors}), do: errors
+  def errors(_state), do: %{}
+
+  # Ash's messages, filled in but not translated, until they can be
+  defp message({message, vars}) do
+    Enum.reduce(vars, message, fn {key, value}, message ->
+      String.replace(message, "%{#{key}}", var(value))
+    end)
+  end
+
+  # Lists are chardata to `to_string/1`, so a list of values (`one_of`'s) is joined
+  defp var(value) when is_list(value), do: Enum.map_join(value, ", ", &var/1)
+
+  defp var(value) do
+    if String.Chars.impl_for(value), do: to_string(value), else: inspect(value)
+  end
+end

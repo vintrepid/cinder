@@ -58,6 +58,9 @@ defmodule Cinder.Next do
   attr :bulk_action_confirm, :any,
     doc: "A function component asking the user to confirm a bulk action"
 
+  attr :translate_error, :any,
+    doc: "A function translating an error message, given `{message, vars}`"
+
   slot :field,
     required: true,
     doc: "A field, shown as a column with its content for each record" do
@@ -104,6 +107,14 @@ defmodule Cinder.Next do
     attr :action_opts, :list,
       doc: "More options for the action: Ash's bulk update or destroy options, or the function's"
   end
+
+  slot :empty,
+    doc:
+      "Shown when a read finds no records, given what's applied (see Empty, loading and errors)"
+
+  slot :loading, doc: "Shown while records are read"
+
+  slot :error, doc: "Shown when a read fails, given `retry`, a JS command to read again"
 
   @doc """
   Shows an Ash resource's records in a table, for the user to sort, filter, search and
@@ -208,7 +219,34 @@ defmodule Cinder.Next do
   A page past the last with records, from an old link or after a bulk action deleted
   its records, shows the last page with records instead.
 
-  ## Loading
+  ## Empty, loading and errors
+
+  ```heex
+  <Cinder.Next.collection id="albums" resource={MyApp.Album}>
+    <:field :let={album} name="title" filter>{album.title}</:field>
+    <:field name="genre" filter column={false} />
+    <:empty :let={empty}>
+      <%= if empty.filtered? do %>
+        No albums match.
+        <.link navigate={~p"/albums/new?\#{Map.take(empty.filters, ["title", "genre"])}"}>
+          Add one
+        </.link>
+      <% else %>
+        No albums yet.
+      <% end %>
+    </:empty>
+  </Cinder.Next.collection>
+  ```
+
+  When a read finds no records, the collection says so, or shows `<:empty>` instead,
+  given what's applied:
+
+    * `filtered?` - whether a filter or the search is applied
+    * `search` - the search text, `""` when there's none
+    * `filters` - each applied filter's value, by field name (`"jazz"`,
+      `%{min: "10", max: ""}`)
+    * `arguments` - each read action argument's value, by its name, the same way.
+      Arguments aren't filtering: the action needs them.
 
   ```heex
   <Cinder.Next.collection id="albums" resource={MyApp.Album} initial_load={:sync}>
@@ -220,6 +258,23 @@ defmodule Cinder.Next do
   `config :cinder, default_initial_load: :sync` does that for every collection. In
   tests with `config :ash, disable_async?: true`, every read is done before the page
   renders.
+
+  If a read fails, the records shown are cleared, and the user is told, with a button
+  to try again. The collection stays on the same page.
+
+  To show your own, give `<:loading>`, or `<:error>`, which is given `retry`, a JS
+  command that reads again:
+
+  ```heex
+  <Cinder.Next.collection id="albums" resource={MyApp.Album}>
+    <:field :let={album} name="title">{album.title}</:field>
+    <:loading><.spinner /> Fetching albums...</:loading>
+    <:error :let={error}>
+      Albums couldn't be loaded.
+      <button type="button" phx-click={error.retry}>Try again</button>
+    </:error>
+  </Cinder.Next.collection>
+  ```
 
   ## Keeping it in the URL
 
@@ -258,6 +313,17 @@ defmodule Cinder.Next do
   value, nothing is read. A value the action can't use shows Ash's message under the
   input. `param` gives the argument another name in the form and the URL, for one
   that's taken (by a field, or one of the collection's own params, such as `search`).
+
+  Ash's messages are in English, with their values filled in. To translate them as
+  your forms' are, give `translate_error` a function taking `{message, vars}`, such as
+  the one Phoenix generates, or set it for every collection:
+
+  ```elixir
+  config :cinder, translate_error: &MyAppWeb.CoreComponents.translate_error/1
+  ```
+
+  In `config.exs`, it must be a named function (`&Module.function/1`), as a release
+  can't store any other.
 
   ## Selection
 
@@ -388,10 +454,15 @@ defmodule Cinder.Next do
     <.live_component
       module={Cinder.Next.Collection}
       id={@id}
-      options={assigns_to_attributes(assigns, [:field, :argument, :bulk_action])}
+      options={
+        assigns_to_attributes(assigns, [:field, :argument, :bulk_action, :empty, :loading, :error])
+      }
       fields={@field}
       arguments={@argument}
       bulk_actions={@bulk_action}
+      empty_slot={@empty}
+      loading_slot={@loading}
+      error_slot={@error}
     />
     """
   end
