@@ -27,10 +27,17 @@ defmodule Cinder.Params do
   Given `Cinder.Engine.Argument`s instead, the same for their inputs, as
   `Cinder.Engine.Query`'s `arguments`.
   """
-  @spec filters_from_params(%{String.t() => term()}, [Field.t() | Argument.t()]) ::
+  @spec filters_from_form(%{String.t() => term()}, [Field.t() | Argument.t()]) ::
           %{String.t() => map()}
-  def filters_from_params(params, inputs) do
+  def filters_from_form(params, inputs) do
     FilterManager.params_to_filters(params, Enum.map(inputs, &column_map/1))
+  end
+
+  # As `filters_from_form/2`, less a range's halves: they're form input, and the
+  # URL has the range whole
+  defp filters_from_url(params, inputs) do
+    columns = Enum.map(inputs, &column_map/1)
+    params |> FilterManager.drop_range_halves(columns) |> FilterManager.params_to_filters(columns)
   end
 
   defp column_map(%Field{} = field), do: Field.to_column_map(field)
@@ -109,8 +116,9 @@ defmodule Cinder.Params do
   """
   @spec from_url(%{String.t() => term()}, [Field.t()], Query.t(), keyword()) :: Query.t()
   def from_url(params, fields, %Query{} = defaults, opts) do
+    # Only a string is a sort: `?sort[]=x` is a list
     sort =
-      if Map.has_key?(params, "sort") do
+      if is_binary(params["sort"]) do
         params["sort"]
         |> UrlManager.decode_sort(Enum.map(fields, &Field.to_column_map/1))
         |> limit_sorts(Keyword.get(opts, :sort_mode, :additive))
@@ -121,8 +129,8 @@ defmodule Cinder.Params do
     search? = Keyword.get(opts, :search?, true) and is_binary(params["search"])
 
     query = %Query{
-      filters: filters_from_params(params, fields),
-      arguments: filters_from_params(params, Keyword.get(opts, :arguments, [])),
+      filters: filters_from_url(params, fields),
+      arguments: filters_from_url(params, Keyword.get(opts, :arguments, [])),
       search: if(search?, do: params["search"], else: defaults.search),
       sort: sort,
       page: UrlManager.decode_page(params["page"]),

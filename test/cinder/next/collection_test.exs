@@ -15,12 +15,15 @@ defmodule Cinder.Next.CollectionTest do
       live: 2,
       render: 1,
       render_async: 1,
+      render_change: 2,
       render_change: 3,
       render_click: 1,
       render_click: 2,
       render_click: 3,
       render_component: 2,
       render_patch: 2,
+      render_submit: 2,
+      refute_patched: 1,
       with_target: 2
     ]
 
@@ -126,6 +129,17 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_has("#albums td", text: "Abbey")
       |> fill_in("Title", with: "")
       |> assert_has("#albums tbody tr", count: 2)
+    end
+
+    # Enter in a text box submits the form, which without `phx-submit` the browser
+    # does itself, loading the page again
+    test "submitting the filters, as Enter does, filters in place", %{conn: conn} do
+      conn
+      |> visit(filterable())
+      |> fill_in("Title", with: "ab")
+      |> submit()
+      |> assert_has("#albums tbody tr", count: 1)
+      |> assert_has("#albums td", text: "Abbey")
     end
 
     test "choosing in a select filter shows only the records that match", %{conn: conn} do
@@ -242,6 +256,25 @@ defmodule Cinder.Next.CollectionTest do
     end
   end
 
+  # A translation of "Show {selector} per page" decides where the size's select goes
+  describe "page_size_label/1" do
+    alias Cinder.Next.Collection
+
+    test "splits the text around the select" do
+      assert Collection.page_size_label("Show {selector} per page") == {"Show ", " per page"}
+      assert Collection.page_size_label("{selector} pro Seite") == {"", " pro Seite"}
+    end
+
+    test "a translation without the select's place puts the select after the text" do
+      assert Collection.page_size_label("Per page:") == {"Per page:", ""}
+    end
+
+    test "a translation placing it twice puts it at the first" do
+      assert Collection.page_size_label("Show {selector} of {selector}") ==
+               {"Show ", " of {selector}"}
+    end
+  end
+
   describe "paging" do
     # With the two albums from the main setup, five, in pages of two
     setup do
@@ -284,6 +317,18 @@ defmodule Cinder.Next.CollectionTest do
       |> assert_has("#albums nav button[disabled]", text: "Next page")
       |> click_button("#albums nav button", "Previous page")
       |> titles(["Cold", "Dark"])
+    end
+
+    # Enter sends the form again, unchanged
+    test "filters that don't change stay on the page, and read nothing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, paged())
+      view |> element("#albums-filters") |> render_change(%{"search" => "e"})
+      view |> element("#albums nav button", "Next page") |> render_click()
+      reject(Ash, :read, 2)
+
+      html = view |> element("#albums-filters") |> render_submit(%{"search" => "e"})
+      assert html =~ "Page 2 of 2"
+      assert html =~ "Echo"
     end
 
     test "back to the first page when the sort, the filters or the search change",
@@ -818,6 +863,15 @@ defmodule Cinder.Next.CollectionTest do
       html = view |> element("#albums th button", "Title") |> render_click()
       assert html =~ ~r/Echo.*Dark/s
       assert_patch(view, path <> "?sort=-title", 0)
+    end
+
+    test "filters that don't change stay on the page, with no patch or read", %{conn: conn} do
+      {:ok, view, _html} = live(conn, synced() <> "?search=e&page=2")
+      reject(Ash, :read, 2)
+
+      html = view |> element("#albums-filters") |> render_change(%{"search" => "e"})
+      assert html =~ "Page 2 of 2"
+      refute_patched(view)
     end
 
     test "a page past the last shows the last, and the URL follows", %{conn: conn} do

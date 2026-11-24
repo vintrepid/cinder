@@ -167,15 +167,19 @@ defmodule Cinder.Next.Collection do
     %{config: config, query: query} = socket.assigns
     inputs = params["filters"] || %{}
 
-    query = %{
+    filtered = %{
       query
-      | filters: Params.filters_from_params(inputs, config.fields),
-        arguments: Params.filters_from_params(inputs, config.arguments),
+      | filters: Params.filters_from_form(inputs, config.fields),
+        arguments: Params.filters_from_form(inputs, config.arguments),
         search: params["search"] || ""
     }
 
-    query = State.first_page(query)
-    {:noreply, request(socket, query)}
+    # The form sent again unchanged (Enter does) stays on its page, with no read
+    if filtered == query do
+      {:noreply, socket}
+    else
+      {:noreply, request(socket, State.first_page(filtered))}
+    end
   end
 
   # An offset page comes from the client, so one that isn't a positive number is
@@ -422,6 +426,7 @@ defmodule Cinder.Next.Collection do
       )
 
     {source, fields, query, opts} = read_inputs(config, query)
+    opts = [id: socket.assigns.id] ++ opts
 
     # A read missing a required argument would fail; it's invalid, with nothing to say
     # yet. It still goes the way any read does, so it supersedes one still running.
@@ -478,6 +483,7 @@ defmodule Cinder.Next.Collection do
         :if={@config.filters != [] or @config.search != nil or @config.argument_inputs != []}
         id={"#{@id}-filters"}
         phx-change="filter"
+        phx-submit="filter"
         phx-target={@myself}
       >
         <div :for={%{column: column, module: module} <- @config.argument_inputs}>
@@ -734,11 +740,19 @@ defmodule Cinder.Next.Collection do
   defp size_choice?(%{pagination: %{size_options: [_, _ | _]}}), do: true
   defp size_choice?(_config), do: false
 
-  # Split, so a translation can put the size where its language needs it
-  defp page_size(assigns) do
-    [before, after_sizes] =
-      String.split(dgettext("cinder", "Show {selector} per page"), "{selector}")
+  # Split, so a translation can put the size where its language needs it. A
+  # translation that doesn't place it once is a mistake in the translation, so it
+  # shows rather than crashing the page
+  @doc false
+  def page_size_label(text) do
+    case String.split(text, "{selector}", parts: 2) do
+      [before, after_sizes] -> {before, after_sizes}
+      [text] -> {text, ""}
+    end
+  end
 
+  defp page_size(assigns) do
+    {before, after_sizes} = page_size_label(dgettext("cinder", "Show {selector} per page"))
     assigns = assign(assigns, before: before, after_sizes: after_sizes)
 
     ~H"""
